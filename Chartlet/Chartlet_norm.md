@@ -8,10 +8,11 @@
 - 坦克名
     - Asuka
     - Rei
+    - 1 —— 灰色轮式
 - 运动状态
-    - Fire —— 开火
-    - Move —— 移动
-    - Static —— 静止
+    - Fire —— 开火 —— 15 FPS
+    - Move —— 移动 —— 10 FPS
+    - Static —— 静止 —— 10 FPS
 - 方向
     - A —— 向左
     - S —— 向下
