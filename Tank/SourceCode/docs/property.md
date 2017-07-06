@@ -22,9 +22,19 @@
     - 属性
         - 第一技能冷却时间 - m_fSkillOneCD
         - 第二技能冷却时间 - m_fSkillTwoCD
+        - 治疗冷却时间 - m_fSkillHealCD
+	    - 坦克治疗时间器 - m_fHealTime
+	    - 坦克最大速度 - m_fMaxSpeed
+	    - 坦克状态 - m_iTankState 0：初始状态;1:正常运动;2:治疗状态
+	    - 治疗技能状态 - m_bSkillHealState
+	    - 治疗动画时间 - m_fSkillHealPlayTime
     - 方法
         - 所有属性的SET方法
         - 所有属性的GET方法
+        - 移动方法 - 虚 OnMove() void
+        - 开火方法 - 虚 OnFire() void 
+        - 治疗方法 - OnHeal() void
+        - 坦克运行中 - TankLoop(float fDeltaTime) void
 - CTankEnemy --敌人 (继承自CWeapon)
     - 属性
         - 敌人种类 - m_iEnemySpecies
