@@ -1,6 +1,12 @@
 # 贴图命名规范
 ## 欢迎界面与UI
 - N/A
+## Effect
+- 治疗
+    - TankSkillHeal —— 治疗技能
+    - Asuka & Rei
+    - A & S & W
+- 爆炸
 ## Tank
 - 坦克种类
     - TankPlayer —— 我方坦克
@@ -19,6 +25,6 @@
     - W —— 向上
 - 子弹 —— Bullet
 ## Map
-- N/A
+- 弹坑
 ## 结束界面与计分板
 - N/A
