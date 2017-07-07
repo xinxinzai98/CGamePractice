@@ -3,6 +3,9 @@
         - 坦克通过性 - m_iTanksTrans
         - 子弹通过性 - m_iBulletsTrans
         - 贴图编号 - m_iChartlet
+        - 贴图X位置 - m_iNewPosX
+        - 贴图Y位置 - m_iNewPosY
+        - 最小单元格 - m_fMinBox
     - 方法
         - 所有属性的SET方法
         - 所有属性的GET方法
@@ -13,11 +16,13 @@
         - 方向 - m_iDir
         - X方向速度 - m_fSpeedX
         - Y方向速度 - m_fSpeedY
+        - 伤害 - m_fAttack
     - 方法
         - 所有属性的SET方法
         - 所有属性的GET方法
         - 移动方法 - 虚 OnMove() void
         - 开火方法 - 虚 OnFire() void 
+        - 敌人出生方法 - 虚 Born() void
 - CTankPlayer --玩家 (继承自CWeapon)
     - 属性
         - 第一技能冷却时间 - m_fSkillOneCD
@@ -28,6 +33,7 @@
 	    - 坦克状态 - m_iTankState 0：初始状态;1:正常运动;2:治疗状态
 	    - 治疗技能状态 - m_bSkillHealState
 	    - 治疗动画时间 - m_fSkillHealPlayTime
+        - 制退距离 - m_fTankBackLine
     - 方法
         - 所有属性的SET方法
         - 所有属性的GET方法
@@ -35,14 +41,21 @@
         - 开火方法 - 虚 OnFire() void 
         - 治疗方法 - OnHeal() void
         - 坦克运行中 - TankLoop(float fDeltaTime) void
+        - 坦克制退 - TankBack()
 - CTankEnemy --敌人 (继承自CWeapon)
     - 属性
         - 敌人种类 - m_iEnemySpecies
+        - 制退距离 - m_fTankBackLine
+        - 坦克最大速度 - m_fMaxSpeed
+        - 敌人目标 - m_EnemyTarget
+        - 敌人出生地 - m_iEnemyPlace
+        - 敌人出生时间 - m_iEnemyBornTime
     - 方法
         - 所有属性的SET方法
         - 所有属性的GET方法
         - 移动方法 - OnMove()
         - 开火方法 - OnFire()
+        - 出生方法 - Born()
 - CBullet --子弹 (继承自CWeapon)
     - 属性
         - 子弹射出者 - m_iOwner
