@@ -1,6 +1,10 @@
 # 贴图命名规范
 ## 欢迎界面与UI
-- N/A
+- Hello
+    - Hello
+- Button
+    - Play
+    - Rank
 ## Effect
 - 治疗
     - TankSkillHeal —— 治疗技能
@@ -15,6 +19,7 @@
     - Asuka
     - Rei
     - 1 —— 灰色轮式
+    - 2 —— 红色大炮口
 - 运动状态
     - Fire —— 开火 —— 15 FPS
     - Move —— 移动 —— 10 FPS
@@ -24,7 +29,11 @@
     - S —— 向下
     - W —— 向上
 - 子弹 —— Bullet
-## Map
-- 弹坑
+## Map 30*30
+- map
+- 地图风格
+- 地图编号
+## bMap 30*30
+
 ## 结束界面与计分板
 - N/A
