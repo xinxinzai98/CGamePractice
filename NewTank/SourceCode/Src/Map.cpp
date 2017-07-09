@@ -32,10 +32,10 @@ void CMap::Init()
 void CMap::ChangeProperty()
 {
 	switch(GetProperty())
-		{
+		{	
 			case 1:
-				SetTanksTrans(0);
-				SetBulletsTrans(0);	//山
+				SetTanksTrans(1);
+				SetBulletsTrans(1); //地皮
 				SetBroken(0);
 				break;
 			case 2:
@@ -48,10 +48,6 @@ void CMap::ChangeProperty()
 				SetBulletsTrans(0); //可破坏物
 				SetBroken(1);
 				break;
-			case 4:
-				SetTanksTrans(1);
-				SetBulletsTrans(1); //地皮
-				SetBroken(0);
-				break;
+
 		}
 }
