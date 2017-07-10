@@ -17,7 +17,6 @@
 #include "Bullet.h"
 #include <vector>
 using namespace std;
-
 /////////////////////////////////////////////////////////////////////////////////
 //
 // 游戏总管类。负责处理游戏主循环、游戏初始化、结束等工作
@@ -29,9 +28,11 @@ private:
 	float 			m_fGameTime;				// 每局游戏总时间
 	CTankPlayer1*   TankPlayer_Asuka;
 	CTankPlayer2*   TankPlayer_Rei;
-	vector<CWeapon*> WeaponBox;
-	CTextSprite*		timeb;
-	vector<CMap*> MapBox;
+	vector<CTankEnemy*> EnemyBox;
+	vector<CMap*> 	MapBox;
+	vector<CBullet*> BulletBox;
+	vector<CSprite*> InfoBox;
+//游戏信息处理，蒙版，地图边界
 public:
 	CGameMain();            //构造函数
 	~CGameMain();           //析构函数  
@@ -57,8 +58,13 @@ public:
 	// 游戏自用函数
 	void			AddBullet( int iDir,float fPosX,float fPosY ,int iOwner,float fAttack);//添加子弹函数
 	void 			AddEnemy(int round [][3]);//将敌人加入关卡
-	void 			LoadGameMap(int map [][4], int num);//加载地图
+	void 			LoadGameMap(int map[][4], int num);//加载地图
+	CMap* 			FindMapByName(const char* szName);//根据名字查找到地图
+	CTankEnemy*		FindEnemyByName(const char* szName);//根据名字查找到敌人
+	CBullet*		FindBulletByName(const char* szName);//根据名字查找到对象
+	void 			ShowMeTheInfo(int num);
 };
+//
 
 /////////////////////////////////////////////////////////////////////////////////
 // 

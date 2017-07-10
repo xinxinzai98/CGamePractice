@@ -22,11 +22,14 @@ CTankPlayer2::~CTankPlayer2()
 void CTankPlayer2::Init()
 {
     SetMaxSpeed(10);
-    SetSpritePosition(40,0);
+    SetSpritePosition(30,0);
     SetSkillHealCD(5);
     SetTankState(1);
 	SetAttack(20);
 	SetTankBackLine(5);
+	SetSpriteWorldLimit(WORLD_LIMIT_STICKY, -37.5, -37.5, 37.5, 37.5);
+	SetSpriteCollisionActive(1,1);//设置为可以接受和发生碰撞
+	SetFireCD(1.0);
 }
 void CTankPlayer2::OnMove(int iKey, bool bPress)
 {
@@ -89,7 +92,7 @@ void CTankPlayer2::OnMove(int iKey, bool bPress)
 }
 void CTankPlayer2::OnFire()
 {
-	if (GetTankState()==1)
+	if (GetTankState()==1&&GetFireState()==true)
 	{
 		float x,y;
 		x = GetSpritePositionX();
@@ -127,6 +130,7 @@ void CTankPlayer2::OnFire()
 	        }
 		g_GameMain.AddBullet(GetDir(),x,y,1,GetAttack());
 		TankBack();
+		SetFireState(false);
 	}
 }
 void CTankPlayer2::OnHeal()

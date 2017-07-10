@@ -39,6 +39,6 @@ void CBullet::OnMove(int iDir)
 			SetSpeedY(0);
 			break;
 		}
-		SetSpriteRotation(90*GetDir());
-		SetSpriteLinearVelocity(GetSpeedX(),GetSpeedY());
+	SetSpriteRotation(90*GetDir());
+	SetSpriteLinearVelocity(GetSpeedX(),GetSpeedY());
 }

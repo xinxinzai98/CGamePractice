@@ -20,11 +20,14 @@ CTankPlayer1::~CTankPlayer1()
 void CTankPlayer1::Init()
 {
     SetMaxSpeed(10);
-    SetSpritePosition(-40,0);
+    SetSpritePosition(-20,0);
     SetSkillHealCD(5);
     SetTankState(1);
 	SetAttack(20);
 	SetTankBackLine(5);
+	SetSpriteWorldLimit(WORLD_LIMIT_STICKY, -37.5, -37.5, 37.5, 37.5);
+	SetSpriteCollisionActive(1,1);//设置为可以接受和发生碰撞
+	SetFireCD(1.0);
 }
 
 void CTankPlayer1::OnMove(int iKey, bool bPress)
@@ -88,7 +91,7 @@ void CTankPlayer1::OnMove(int iKey, bool bPress)
 }
 void CTankPlayer1::OnFire()
 {
-	if (GetTankState()==1)
+	if (GetTankState()==1&&GetFireState()==true)
 	{
 		float x,y;
 		x = GetSpritePositionX();
@@ -126,6 +129,7 @@ void CTankPlayer1::OnFire()
 	        }
 		g_GameMain.AddBullet(GetDir(),x,y,1,GetAttack());
 		TankBack();
+		SetFireState(false);
 	}
 }
 void CTankPlayer1::OnHeal()
@@ -134,11 +138,14 @@ void CTankPlayer1::OnHeal()
         {
             SetSkillHealState(false);
             SetTankState(2);
+			SetSpeedX(0);
+    		SetSpeedY(0);
+    		SetSpriteLinearVelocity(GetSpeedX(),GetSpeedY());
 			switch (GetDir())
         	{
             	case 2:
                 	{
-						AnimateSpritePlayAnimation("TankSkillHealAsuka_A",true);
+						AnimateSpritePlayAnimation("TankSkillHealAsuka_W",true);
 						break;
 					}
 				case 3:
@@ -149,7 +156,7 @@ void CTankPlayer1::OnHeal()
 					}
 				case 4:
     	            {
-						AnimateSpritePlayAnimation("TankSkillHealAsuka_A",true);
+						AnimateSpritePlayAnimation("TankSkillHealAsuka_S",true);
 						break;
 					}
 				case 1:

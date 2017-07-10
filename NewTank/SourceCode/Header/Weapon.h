@@ -25,7 +25,7 @@ public:
 	virtual ~CWeapon();
 	virtual void OnMove(){}; //移动方法
 	virtual void OnFire(){}; //开火方法
-	virtual void Born(){};//敌人出生方法
+	virtual void Loop(float fDeltaTime){};
 	//Set
 	void SetDir(int dir) {m_iDir = dir;}
 	void SetHp(int hp) {m_iHp = hp;}
@@ -38,7 +38,6 @@ public:
 	float GetSpeedX() {return m_fSpeedX;}
 	float GetSpeedY() {return m_fSpeedY;}
 	float GetAttack() {return m_fAttack;}
-	virtual float GetEnemyBornTime(){return 0;};//敌方坦克出生时间
 };
 
 #endif // !defined(AFX_WEAPON_H__756F199E_987E_4167_9A78_976F417FACA8__INCLUDED_)

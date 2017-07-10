@@ -23,6 +23,10 @@ private:
 	float m_fMaxSpeed;//坦克最大速度
 	int m_iTankState;//坦克状态 0：初始状态;1:正常运动;2:治疗状态
 	float m_fTankBackLine;//制退距离
+	float m_fCHangeColorTime;//变颜色时间器
+	float m_fFireCD;//开火cd
+	bool m_bFireState;//开火状态
+	float m_fFireTime;//开火时间器
 public:
 	//main
 	CTankPlayer(const char*szname);
@@ -32,6 +36,9 @@ public:
 	virtual void OnHeal(){};//治疗方法
 	void TankLoop(float fDeltaTime);//坦克运行中
 	void TankBack();//坦克制退
+	void OnColMap(int tanktrans);
+	void OnColTank();
+	void OnColBullet(int owner,float attack);
 	//Set
 	void SetSkillOneCD(float skillonecd) {m_fSkillOneCD = skillonecd;}
 	void SetSkillTwoCD(float skilltwocd) {m_fSkillTwoCD = skilltwocd;}
@@ -41,6 +48,8 @@ public:
 	void SetSkillHealState(bool skillstatestate) {m_bSkillHealState = skillstatestate;}
 	void SetTankBackLine(float tankbackline) {m_fTankBackLine = tankbackline;}
 	void SetSkillHealPlayTime(float playtime) {m_fSkillHealPlayTime = playtime;}
+	void SetFireCD(float firecd) {m_fFireCD = firecd;}
+	void SetFireState(bool firestate) {m_bFireState = firestate;}
 	//Get
 	float GetSkillOneCD() {return m_fSkillOneCD;}
 	float GetSkillTwoCD() {return m_fSkillTwoCD;}
@@ -50,6 +59,9 @@ public:
 	bool GetSkillHealState() {return m_bSkillHealState;}
 	float GetTankBackLine() {return m_fTankBackLine;}
 	float GetSkillHealPlayTime() {return m_fSkillHealPlayTime;}
+	float GetFireCD() {return m_fFireCD;}
+	bool GetFireState() {return m_bFireState;}
+	float GetFireTime() {return m_fFireTime;}
 };
 
 #endif // !defined(AFX_TANKPLAYER_H__9227C30B_0993_43E9_9FEC_2B4AC7818709__INCLUDED_)

@@ -28,11 +28,12 @@ void CMap::Init()
 	float Y =  37.5-GetNewPosY()*m_fMinBox-m_fMinBox/2;
 	SetSpritePosition(X,Y);
 	ChangeProperty();
+	SetSpriteCollisionActive(0,1);//设置为可以接受和发生碰撞
 }
 void CMap::ChangeProperty()
 {
 	switch(GetProperty())
-		{	
+		{
 			case 1:
 				SetTanksTrans(1);
 				SetBulletsTrans(1); //地皮
@@ -48,6 +49,5 @@ void CMap::ChangeProperty()
 				SetBulletsTrans(0); //可破坏物
 				SetBroken(1);
 				break;
-
 		}
 }
