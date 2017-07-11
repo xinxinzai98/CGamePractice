@@ -266,7 +266,7 @@ void CGameMain::GameRun( float fDeltaTime )
 	m_fGameTime+=fDeltaTime;
 	TankPlayer_Asuka->TankLoop(fDeltaTime);
 	TankPlayer_Rei->TankLoop(fDeltaTime);
-	
+	//ChangeTheInfo();
 	//敌人出生
 	for (int i=0;i<EnemyBox.size();i++)
 		{
@@ -340,6 +340,18 @@ void CGameMain::OnKeyDown( const int iKey, const bool bAltPress, const bool bShi
 		TankPlayer_Rei->OnFire();
 	if (iKey==KEY_E)
 		TankPlayer_Asuka->OnHeal();
+	if (iKey==KEY_DECIMAL)
+		TankPlayer_Rei->OnHeal();
+	if (iKey==KEY_Q)
+		TankPlayer_Asuka->Speed();
+	if (iKey==KEY_NUMPAD1)
+		TankPlayer_Rei->Speed();
+	if (iKey==KEY_Z)
+		TankPlayer_Asuka->Trans();
+	if (iKey==KEY_NUMPAD2)
+		TankPlayer_Rei->TP();
+	if (iKey==KEY_NUMPAD3)
+		TankPlayer_Rei->Miss();
 }
 //==========================================================================
 //
@@ -393,6 +405,14 @@ void CGameMain::OnSpriteColSprite( const char *szSrcName, const char *szTarName 
 			else if (strstr(szTarName,"TankPlayer")!=NULL||strstr(szTarName,"Enemy_")!=NULL)
 				{
 					FindEnemyByName(szSrcName)->OnColTank();
+				}
+		}
+	else if (strstr(szSrcName,"miss_")!=NULL)
+		{
+			if (strstr(szTarName,"Enemy_")!=NULL)
+				{
+					FindEnemyByName(szTarName)->OnColMiss(FindBulletByName(szSrcName)->GetAttack());
+					FindBulletByName(szSrcName)->DeleteSprite();
 				}
 		}
 	else if (strstr(szSrcName,"Bullet_")!=NULL)
@@ -551,25 +571,74 @@ CBullet* CGameMain::FindBulletByName(const char* szName)//根据名字查找到对象
 }
 //===========================================================================
 //
-// 显示
+// 显示信息
 // 参数 num: 关卡
 void CGameMain::ShowMeTheInfo(int num)
 {
 	char * mapname = CSystem::MakeSpriteName("MapCover_",num);
-	CSprite* MapCover =new CSprite("MapCover");
+	CAnimateSprite* MapCover =new CAnimateSprite("MapCover");
 	MapCover->CloneSprite(mapname);
 	MapCover->SetSpritePosition(0,0);
 	InfoBox.push_back(MapCover);
 
-	CSprite* FireCD1 = new CSprite("FireCD1");
+	CAnimateSprite* FireCD1 = new CAnimateSprite("FireCD1");
 	FireCD1->CloneSprite("FireCD");
 	FireCD1->SetSpritePosition(-44.375,3.75);
 	InfoBox.push_back(FireCD1);
-	CSprite* FireCD2 = new CSprite("FireCD2");
+	CAnimateSprite* FireCD2 = new CAnimateSprite("FireCD2");
 	FireCD2->CloneSprite("FireCD");
 	FireCD2->SetSpritePosition(44.375,3.75);
 	InfoBox.push_back(FireCD2);
 
+	CAnimateSprite* HealCD1 = new CAnimateSprite("HealCD1");
+	HealCD1->CloneSprite("HealCD");
+	HealCD1->SetSpritePosition(-44.375,11.25);
+	InfoBox.push_back(HealCD1);
+	CAnimateSprite* HealCD2 = new CAnimateSprite("HealCD2");
+	HealCD2->CloneSprite("HealCD");
+	HealCD2->SetSpritePosition(44.375,11.25);
+	InfoBox.push_back(HealCD2);
+
+	CAnimateSprite* SpeedCD1 = new CAnimateSprite("SpeedCD1");
+	SpeedCD1->CloneSprite("SpeedCD");
+	SpeedCD1->SetSpritePosition(-44.375,18.75);
+	InfoBox.push_back(SpeedCD1);
+	CAnimateSprite* SpeedCD2 = new CAnimateSprite("SpeedCD2");
+	SpeedCD2->CloneSprite("SpeedCD");
+	SpeedCD2->SetSpritePosition(44.375,18.75);
+	InfoBox.push_back(SpeedCD2);
+
+	CAnimateSprite* TransCD = new CAnimateSprite("TranCD");
+	TransCD->CloneSprite("TransCD");
+	TransCD->SetSpritePosition(-44.375,26.25);
+	InfoBox.push_back(TransCD);
+
+	CAnimateSprite* TPCD = new CAnimateSprite("TPCD");
+	TPCD->CloneSprite("TPCD");
+	TPCD->SetSpritePosition(44.375,26.25);
+	InfoBox.push_back(TPCD);
+	
+	CAnimateSprite* MissCD = new CAnimateSprite("missCD");
+	MissCD->CloneSprite("missCD");
+	MissCD->SetSpritePosition(44.375,33.75);
+	InfoBox.push_back(MissCD);
+}
+//===========================================================================
+//
+// 改变信息
+void CGameMain::ChangeTheInfo()
+{
+	if (TankPlayer_Asuka->GetFireState()==false)
+		FindCDByName("FireCD1")->AnimateSpritePlayAnimation("FireCD_0",true);
+	else if (TankPlayer_Asuka->GetFireState()==true)
+		FindCDByName("FireCD1")->AnimateSpritePlayAnimation("FireCD_1",true);
+	
+	if (TankPlayer_Rei->GetFireState()==false)
+		FindCDByName("FireCD2")->AnimateSpritePlayAnimation("FireCD_0",true);
+	else if (TankPlayer_Rei->GetFireState()==true)
+		FindCDByName("FireCD2")->AnimateSpritePlayAnimation("FireCD_1",true);
+
+	/*if (TankPlayer_Rei->GetFireState()==false)
 	CSprite* HealCD1 = new CSprite("HealCD1");
 	HealCD1->CloneSprite("HealCD");
 	HealCD1->SetSpritePosition(-44.375,11.25);
@@ -586,5 +655,47 @@ void CGameMain::ShowMeTheInfo(int num)
 	CSprite* SpeedCD2 = new CSprite("SpeedCD2");
 	SpeedCD2->CloneSprite("SpeedCD");
 	SpeedCD2->SetSpritePosition(44.375,18.75);
-	InfoBox.push_back(SpeedCD2);
+	InfoBox.push_back(SpeedCD2);*/
+}
+//===========================================================================
+//
+// 找到显示器
+CAnimateSprite* CGameMain::FindCDByName(const char* szName)//根据名字查找到对象
+{
+	for(int i=0; i<InfoBox.size(); i++)
+	{
+			if(strcmp(szName,InfoBox[i]->GetName())==0)
+			{
+				return InfoBox[i];
+			}
+	}
+	return NULL;
+}
+
+//===========================================================================
+//
+// 添加子弹函数
+// 参数 iDir：子弹方向
+// 参数 fPosX,fPosY: 子弹起始位置
+// 参数 iOwner: 子弹归属
+void CGameMain::AddMiss( int iDir,float fPosX,float fPosY ,int iOwner,float fAttack)
+{
+	char* szName = CSystem::MakeSpriteName("miss_",m_iBulletNum);//创建子弹名字
+	CBullet* pBullet = new CBullet(szName);
+	pBullet->CloneSprite("miss");
+	pBullet->SetSpritePosition(fPosX,fPosY);
+	pBullet->SetSpriteCollisionActive(1,0);//设置为可以接受和发生碰撞
+	pBullet->SetAttack(fAttack);
+	pBullet->OnMove(iDir);
+	pBullet->SetSpriteWorldLimit(WORLD_LIMIT_KILL, -37.5, -37.5, 37.5, 37.5);
+	m_iBulletNum++; //子弹个数加1
+	if(iOwner == 1)
+		{
+			pBullet->SetOwner(1);//1表示我方坦克发射的子弹
+		}
+	else
+		{
+			pBullet->SetOwner(0); //0表示敌方坦克发射的子弹
+		}
+	BulletBox.push_back(pBullet);
 }

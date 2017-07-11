@@ -39,6 +39,7 @@ public:
 	void OnColTank();
 	void OnColBullet(int owner,float attack);
 	void TankBack();
+	void OnColMiss(float attack);
 	//Get
 	float GetMaxSpeed() {return m_fMaxSpeed;}
 	float GetTankBackLine() {return m_fTankBackLine;}

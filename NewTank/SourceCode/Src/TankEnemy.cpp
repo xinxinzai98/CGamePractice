@@ -16,6 +16,7 @@ CTankEnemy::CTankEnemy(const char* szname):CWeapon(szname)
     m_fChangeDirTime = 0;
     m_fCHangeColorTime = 0;
     m_fFireTime = 0;
+    
 }
 
 CTankEnemy::~CTankEnemy()
@@ -174,6 +175,7 @@ void CTankEnemy::Loop(float fDeltaTime)
         OnFire();
         m_fFireTime = 0.f;
     }
+    
 }
 
 void CTankEnemy::OnColMap(int tanktrans)
@@ -260,4 +262,10 @@ void CTankEnemy::TankBack()
                 break;
         }
     SpriteMoveTo(x,y,50,true);
+}
+void CTankEnemy::OnColMiss(float attack)
+{
+    SetSpriteLinearVelocity(0,0);
+    SetHp(GetHp()-attack);
+    AnimateSpritePlayAnimation("Boom",false);
 }

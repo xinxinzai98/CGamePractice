@@ -14,6 +14,11 @@
 class CTankPlayer1 : public CTankPlayer  
 {
 private:
+	float m_fTransCD;
+	bool m_bTransState;
+	float m_fTransTime;
+	float m_fTransCCTime;
+	float m_fTranFireCount;
 public:
 	//main
 	CTankPlayer1(const char* szname);
@@ -22,6 +27,10 @@ public:
 	void OnFire();
 	void Init();//初始化
 	void OnHeal();//治疗方法
+	void TankLoop(float fDeltaTime);
+	void Speed();
+	void Trans();
+	void TransFire();
 	//Get
 	
 	//Set

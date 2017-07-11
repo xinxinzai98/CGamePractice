@@ -31,7 +31,7 @@ private:
 	vector<CTankEnemy*> EnemyBox;
 	vector<CMap*> 	MapBox;
 	vector<CBullet*> BulletBox;
-	vector<CSprite*> InfoBox;
+	vector<CAnimateSprite*> InfoBox;
 //游戏信息处理，蒙版，地图边界
 public:
 	CGameMain();            //构造函数
@@ -63,6 +63,9 @@ public:
 	CTankEnemy*		FindEnemyByName(const char* szName);//根据名字查找到敌人
 	CBullet*		FindBulletByName(const char* szName);//根据名字查找到对象
 	void 			ShowMeTheInfo(int num);
+	void			ChangeTheInfo();
+	CAnimateSprite* FindCDByName(const char* szName);//根据名字查找到对象
+	void 			AddMiss( int iDir,float fPosX,float fPosY ,int iOwner,float fAttack);
 };
 //
 
