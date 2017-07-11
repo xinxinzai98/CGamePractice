@@ -1,7 +1,7 @@
-//-------------------------- 7/10/2017 -- 16:27:47 -----
+//-------------------------- 7/10/2017 -- 20:21:55 -----
 Processor Init:
-   Intel Pentium III, ~2.85 Ghz
-     (timed at roughly 2.84 Ghz)
+   Intel (unknown, Pentium Pro/II/III family), ~2.70 Ghz
+     (timed at roughly 2.71 Ghz)
    FPU detected
    MMX detected
    SSE detected
@@ -20,10 +20,10 @@ Initializing chunk mappings...
    o 'TEXT' maps to TextChunk
    o 'SCHK' maps to UnknownChunk
    o 'SCHK' maps to SimChunk
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/main.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/game/main.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/main.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/game/main.cs.
  % - Initializing Common
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/preferences/defaultPrefs.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/preferences/defaultPrefs.cs.
 Reading Display Device information...
    Primary Display Device Found:
       Vendor Id: VEN_0000
@@ -31,12 +31,12 @@ Reading Display Device information...
 
 Using OpenGL rendering. Fullscreen: 0
 
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/xml.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/properties.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/common.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/audio.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/canvas.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/cursor.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/xml.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/properties.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/common.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/audio.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/canvas.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/cursor.cs.
 Video Init:
    Accelerated OpenGL display device detected.
    Accelerated D3D device not detected.
@@ -52,9 +52,9 @@ Pixel format set:
 Creating a new rendering context...
 Making the new rendering context current...
 OpenGL driver information:
-  Vendor: ATI Technologies Inc.
-  Renderer: ATI Radeon HD 4300/4500 Series
-  Version: 3.3.11672 Compatibility Profile Context
+  Vendor: Intel
+  Renderer: Intel(R) HD Graphics 620
+  Version: 4.4.0 - Build 21.20.16.4664
 OpenGL Init: Enabled Extensions
   ARB_multitexture (Max Texture Units: 8)
   EXT_blend_color
@@ -65,15 +65,15 @@ OpenGL Init: Enabled Extensions
   EXT_fog_coord
   ARB_texture_compression
   EXT_texture_compression_s3tc
+  3DFX_texture_compression_FXT1
   (ARB|EXT)_texture_env_add
   EXT_texture_filter_anisotropic (Max anisotropy: 16)
-  WGL_EXT_swap_control
 OpenGL Init: Disabled Extensions
   EXT_paletted_texture
   NV_vertex_array_range
-  3DFX_texture_compression_FXT1
+  WGL_EXT_swap_control
 
-Max Texture Size reported as: 8192
+Max Texture Size reported as: 16384
 Setting screen mode to 800x600x32 (w)...
 OpenAL Driver Init:
    Vendor: Creative Labs Inc.
@@ -81,48 +81,48 @@ OpenAL Driver Init:
    Renderer: Software
    Extensions: EAX 2.0, EAX 3.0, EAX Unified, and EAX-AC3
 
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/profiles.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/cursors.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/messageBoxOk.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/messageBoxYesNo.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/messageBoxYesNoCancel.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/messageBoxOKCancel.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/messageBoxOKCancelDetailsDlg.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/messagePopup.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/options.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/remap.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/console.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/NetworkMenu.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/startServer.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/joinServer.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/waitingForServer.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/helpDlg.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/messageBox.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/help.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gui/chatGui.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/screenshot.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/metrics.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/Gui/FrameOverlayGui.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/scriptDoc.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/keybindings.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/options.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/levelManagement.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/projectManagement.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/projectResources.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/common/gameScripts/align.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/profiles.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/cursors.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/messageBoxOk.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/messageBoxYesNo.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/messageBoxYesNoCancel.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/messageBoxOKCancel.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/messageBoxOKCancelDetailsDlg.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/messagePopup.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/options.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/remap.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/console.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/NetworkMenu.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/startServer.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/joinServer.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/waitingForServer.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/helpDlg.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/messageBox.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/help.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gui/chatGui.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/screenshot.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/metrics.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/Gui/FrameOverlayGui.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/scriptDoc.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/keybindings.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/options.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/levelManagement.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/projectManagement.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/projectResources.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/common/gameScripts/align.cs.
 
 FunCode (v1.7.5) initialized...
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/game/managed/datablocks.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/game/managed/persistent.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/game/managed/brushes.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/game/gameScripts/datablocks.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/game/gameScripts/guiProfiles.cs.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/game/gui/mainScreen.gui.
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/game/gameScripts/game.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/game/managed/datablocks.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/game/managed/persistent.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/game/managed/brushes.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/game/gameScripts/datablocks.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/game/gameScripts/guiProfiles.cs.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/game/gui/mainScreen.gui.
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/game/gameScripts/game.cs.
 Activating DirectInput...
 DirectInput joystick failed to enable!
-Compiling C:/Users/Administrator/Desktop/NewTank710/Bin/game/data/levels/level.t2d...
-Loading compiled script C:/Users/Administrator/Desktop/NewTank710/Bin/game/data/levels/level.t2d.
+Compiling C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/game/data/levels/level.t2d...
+Loading compiled script C:/Users/82447/Documents/GitHub/CGamePractice/NewTank/Bin/game/data/levels/level.t2d.
 t2dSceneGraph::addToScene() - Object '1524' is already in a SceneGraph!.
 t2dSceneGraph::addToScene() - Object '1525' is already in a SceneGraph!.
 t2dSceneGraph::addToScene() - Object '1526' is already in a SceneGraph!.
@@ -374,110 +374,6 @@ t2dSceneGraph::addToScene() - Object '1771' is already in a SceneGraph!.
 t2dSceneGraph::addToScene() - Object '1772' is already in a SceneGraph!.
 t2dSceneGraph::addToScene() - Object '1773' is already in a SceneGraph!.
 t2dSceneGraph::addToScene() - Object '1774' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1775' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1776' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1777' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1778' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1779' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1780' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1781' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1782' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1783' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1784' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1785' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1786' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1787' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1788' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1789' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1790' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1791' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1792' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1793' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1794' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1795' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1796' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1797' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1798' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1799' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1800' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1801' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1802' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1803' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1804' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1805' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1806' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1807' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1808' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1809' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1810' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1811' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1812' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1813' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1814' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1815' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1816' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1817' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1818' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1819' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1820' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1821' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1822' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1823' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1824' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1825' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1826' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1827' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1828' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1829' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1830' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1831' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1832' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1833' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1834' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1835' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1836' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1837' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1838' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1839' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1840' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1841' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1842' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1843' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1844' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1845' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1846' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1847' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1848' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1849' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1850' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1851' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1852' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1853' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1854' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1855' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1856' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1857' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1858' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1859' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1860' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1861' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1862' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1863' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1864' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1865' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1866' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1867' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1868' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1869' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1870' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1871' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1872' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1873' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1874' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1875' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1876' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1877' is already in a SceneGraph!.
-t2dSceneGraph::addToScene() - Object '1878' is already in a SceneGraph!.
 DirectInput deactivated.
 Shutting down the OpenGL display device...
 Making the GL rendering context not current...
