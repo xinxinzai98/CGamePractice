@@ -12,7 +12,7 @@ CTankPlayer::CTankPlayer(const char* szname):CWeapon(szname)
 {
     m_fSkillOneCD = 0.f;
 	m_fSkillTwoCD = 0.f;
-    m_fSkillHealCD = 0.f;
+    m_fSkillHealCD = 20.0;
     m_fMaxSpeed = 0.f;
     m_iTankState = 0;
     m_fHealTime = 0.f;
@@ -21,13 +21,19 @@ CTankPlayer::CTankPlayer(const char* szname):CWeapon(szname)
     m_fCHangeColorTime = 0;
     m_bFireState = true;
     m_fFireTime = 0;
+    m_fSpeedTime = 0;
+    m_bSpeedState = true;
+    m_fSpeedCCTime = 3.0;
+    m_fFireCD = 1.0;
+    m_fSpeedCD = 15.0;
+    m_fSpeedCCTime = 10.0;
 }
 
 CTankPlayer::~CTankPlayer()
 {
 }
 
-void CTankPlayer::TankLoop(float fDeltaTime)
+/*void CTankPlayer::TankLoop(float fDeltaTime)
 {
     if (m_iTankState==2||m_bSkillHealState==false)
         m_fHealTime+=fDeltaTime;
@@ -57,7 +63,7 @@ void CTankPlayer::TankLoop(float fDeltaTime)
                 m_fFireTime = 0.f;
             }
     }
-}
+}*/
 void CTankPlayer::TankBack()
 {
     float x =  GetSpritePositionX();

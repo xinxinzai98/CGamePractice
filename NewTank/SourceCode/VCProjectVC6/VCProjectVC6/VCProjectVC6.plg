@@ -6,14 +6,17 @@
 --------------------Configuration: VCProjectVC6 - Win32 Debug--------------------
 </h3>
 <h3>Command Lines</h3>
-Creating command line "rc.exe /l 0x804 /fo"Debug/VCTemplate.res" /d "_DEBUG" "C:\Users\82447\Documents\GitHub\CGamePractice\NewTank\SourceCode\VCProjectVC6\VCProjectVC6\VCTemplate.rc"" 
-Creating temporary file "C:\Users\82447\AppData\Local\Temp\RSP88AB.tmp" with contents
+Creating temporary file "C:\Users\89464\AppData\Local\Temp\RSP2147.tmp" with contents
 [
 /nologo /MLd /W3 /Gm /GX /ZI /Od /I "../../Header" /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /D "_MBCS" /Fp"Debug/VCProjectVC6.pch" /YX /Fo"Debug/" /Fd"Debug/" /FD /GZ /c 
-"C:\Users\82447\Documents\GitHub\CGamePractice\NewTank\SourceCode\Src\LessonX.cpp"
+"C:\Users\89464\Desktop\NewTank\SourceCode\Src\LessonX.cpp"
+"C:\Users\89464\Desktop\NewTank\SourceCode\Src\Main.cpp"
+"C:\Users\89464\Desktop\NewTank\SourceCode\Src\TankEnemy.cpp"
+"C:\Users\89464\Desktop\NewTank\SourceCode\Src\TankPlayer1.cpp"
+"C:\Users\89464\Desktop\NewTank\SourceCode\Src\TankPlayer2.cpp"
 ]
-Creating command line "cl.exe @C:\Users\82447\AppData\Local\Temp\RSP88AB.tmp" 
-Creating temporary file "C:\Users\82447\AppData\Local\Temp\RSP88AC.tmp" with contents
+Creating command line "cl.exe @C:\Users\89464\AppData\Local\Temp\RSP2147.tmp" 
+Creating temporary file "C:\Users\89464\AppData\Local\Temp\RSP2148.tmp" with contents
 [
 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib Winmm.lib ../../Src/CommonClass_VC6.lib /nologo /subsystem:windows /incremental:no /pdb:"Debug/Game.pdb" /debug /machine:I386 /nodefaultlib:"LIBC.lib" /out:"..\..\..\Bin\Game.exe" /pdbtype:sept 
 .\Debug\Bullet.obj
@@ -27,15 +30,23 @@ kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32
 .\Debug\Weapon.obj
 .\Debug\VCTemplate.res
 ]
-Creating command line "link.exe @C:\Users\82447\AppData\Local\Temp\RSP88AC.tmp"
+Creating command line "link.exe @C:\Users\89464\AppData\Local\Temp\RSP2148.tmp"
 <h3>Output Window</h3>
-Compiling resources...
 Compiling...
+TankEnemy.cpp
+c:\users\89464\desktop\newtank\sourcecode\header\tankenemy.h(49) : warning C4244: 'return' : conversion from 'int' to 'float', possible loss of data
+c:\users\89464\desktop\newtank\sourcecode\header\tankenemy.h(57) : warning C4244: '=' : conversion from 'float' to 'int', possible loss of data
+c:\users\89464\desktop\newtank\sourcecode\header\tankplayer.h(52) : warning C4244: '=' : conversion from 'float' to 'int', possible loss of data
+c:\users\89464\desktop\newtank\sourcecode\header\tankplayer.h(70) : warning C4244: 'return' : conversion from 'int' to 'float', possible loss of data
 LessonX.cpp
-c:\users\82447\documents\github\cgamepractice\newtank\sourcecode\header\tankplayer.h(47) : warning C4244: '=' : conversion from 'float' to 'int', possible loss of data
-c:\users\82447\documents\github\cgamepractice\newtank\sourcecode\header\tankplayer.h(58) : warning C4244: 'return' : conversion from 'int' to 'float', possible loss of data
-c:\users\82447\documents\github\cgamepractice\newtank\sourcecode\header\tankenemy.h(48) : warning C4244: 'return' : conversion from 'int' to 'float', possible loss of data
-c:\users\82447\documents\github\cgamepractice\newtank\sourcecode\header\tankenemy.h(56) : warning C4244: '=' : conversion from 'float' to 'int', possible loss of data
+c:\users\89464\desktop\newtank\sourcecode\header\tankplayer.h(52) : warning C4244: '=' : conversion from 'float' to 'int', possible loss of data
+c:\users\89464\desktop\newtank\sourcecode\header\tankplayer.h(70) : warning C4244: 'return' : conversion from 'int' to 'float', possible loss of data
+c:\users\89464\desktop\newtank\sourcecode\header\tankenemy.h(49) : warning C4244: 'return' : conversion from 'int' to 'float', possible loss of data
+c:\users\89464\desktop\newtank\sourcecode\header\tankenemy.h(57) : warning C4244: '=' : conversion from 'float' to 'int', possible loss of data
+Skipping... (no relevant changes detected)
+Main.cpp
+TankPlayer1.cpp
+TankPlayer2.cpp
 Linking...
 LINK : warning LNK4075: ignoring /EDITANDCONTINUE due to /INCREMENTAL:NO specification
 
