@@ -14,14 +14,12 @@
 class CTankPlayer : public CWeapon  
 {
 private:
-	float m_fSkillOneCD;//第一技能冷却时间
-	float m_fSkillTwoCD;//第二技能冷却时间
 	float m_fSkillHealCD;//治疗冷却时间
 	bool m_bSkillHealState;//治疗技能状态
 	float m_fHealTime;//坦克治疗时间器
 	float m_fSkillHealPlayTime;//治疗动画时间
 	float m_fMaxSpeed;//坦克最大速度
-	int m_iTankState;//坦克状态 0：初始状态;1:正常运动;2:治疗状态;3:加速状态
+	int m_iTankState;//坦克状态 0：死亡状态;1:正常运动;2:治疗状态;3:加速状态
 	float m_fTankBackLine;//制退距离
 	float m_fCHangeColorTime;//变颜色时间器
 	float m_fFireCD;//开火cd
@@ -30,7 +28,9 @@ private:
 	float m_fSpeedCD;//加速cd
 	bool m_bSpeedState;//加速状态
 	float m_fSpeedTime;//加速时间器
-	float m_fSpeedCCTime;
+	float m_fSpeedCCTime;//加速状态持续时间
+	float m_fMaxHP;//血量上限
+	bool m_bTanksLife;
 public:
 	//main
 	CTankPlayer(const char*szname);
@@ -44,9 +44,8 @@ public:
 	void OnColMap(int tanktrans);
 	void OnColTank();
 	void OnColBullet(int owner,float attack);
+	void IsDead();
 	//Set
-	void SetSkillOneCD(float skillonecd) {m_fSkillOneCD = skillonecd;}
-	void SetSkillTwoCD(float skilltwocd) {m_fSkillTwoCD = skilltwocd;}
 	void SetSkillHealCD(float skillhealcd) {m_fSkillHealCD = skillhealcd;}
 	void SetMaxSpeed(float maxspeed) {m_fMaxSpeed = maxspeed;}
 	void SetTankState(float tankstate) {m_iTankState = tankstate;}
@@ -62,9 +61,9 @@ public:
 	void SetSpeedTime(float speedtime) {m_fSpeedTime = speedtime;}
 	void SetSpeedState(bool speedstate) {m_bSpeedState = speedstate;}
 	void SetSpeedCCTime(float speedcctime) {m_fSpeedCCTime = speedcctime;}
+	void SetMaxHP(float maxhp) {m_fMaxHP = maxhp;}
+	void SetTankLife(bool tanklife) {m_bTanksLife = tanklife;}
 	//Get
-	float GetSkillOneCD() {return m_fSkillOneCD;}
-	float GetSkillTwoCD() {return m_fSkillTwoCD;}
 	float GetSkillHealCD() {return m_fSkillHealCD;}
 	float GetMaxSpeed() {return m_fMaxSpeed;}
 	float GetTankState() {return m_iTankState;}
@@ -80,6 +79,8 @@ public:
 	float GetSpeedTime() {return m_fSpeedTime;}
 	bool GetSpeedState() {return m_bSpeedState;}
 	float GetSpeedCCTime() {return m_fSpeedCCTime;}
+	float GetMaxHP() {return m_fMaxHP;}
+	bool GetTanksLife() {return m_bTanksLife;}
 };
 
 #endif // !defined(AFX_TANKPLAYER_H__9227C30B_0993_43E9_9FEC_2B4AC7818709__INCLUDED_)

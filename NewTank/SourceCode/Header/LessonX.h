@@ -25,14 +25,21 @@ class	CGameMain
 private:
 	int				m_iGameState;				// 游戏状态，0：结束或者等待开始；1：初始化；2：游戏进行中
 	int 			m_iBulletNum;				// 子弹数目
+	int 			m_iTankNum;					// 敌方坦克数目
 	float 			m_fGameTime;				// 每局游戏总时间
-	CTankPlayer1*   TankPlayer_Asuka;
-	CTankPlayer2*   TankPlayer_Rei;
-	vector<CTankEnemy*> EnemyBox;
-	vector<CMap*> 	MapBox;
-	vector<CBullet*> BulletBox;
-	vector<CAnimateSprite*> InfoBox;
-//游戏信息处理，蒙版，地图边界
+	CTankPlayer1*   TankPlayer_Asuka;			// 明日香
+	CTankPlayer2*   TankPlayer_Rei;				// 凌波丽
+	vector<CTankEnemy*> EnemyBox;				// 敌方坦克盒子
+	vector<CMap*> 	MapBox;						// 地图盒子
+	vector<CBullet*> BulletBox;					// 子弹盒子
+	vector<CAnimateSprite*> InfoBox;			// 信息盒子
+	CSprite*		Hello;
+	CSprite*		Play;
+	CSprite*		Select;
+	CSprite*		Level1;
+	CSprite*		Level2;
+	CSprite*		Return;
+	bool			m_bFocu;
 public:
 	CGameMain();            //构造函数
 	~CGameMain();           //析构函数  
@@ -57,15 +64,17 @@ public:
 	void 			OnSpriteColWorldLimit( const char *szName, const int iColSide );
 	// 游戏自用函数
 	void			AddBullet( int iDir,float fPosX,float fPosY ,int iOwner,float fAttack);//添加子弹函数
-	void 			AddEnemy(int round [][3]);//将敌人加入关卡
+	void 			AddEnemy(int round [][4]);//将敌人加入关卡
 	void 			LoadGameMap(int map[][4], int num);//加载地图
 	CMap* 			FindMapByName(const char* szName);//根据名字查找到地图
 	CTankEnemy*		FindEnemyByName(const char* szName);//根据名字查找到敌人
 	CBullet*		FindBulletByName(const char* szName);//根据名字查找到对象
-	void 			ShowMeTheInfo(int num);
-	void			ChangeTheInfo();
+	void 			ShowMeTheInfo(int num);//显示信息
 	CAnimateSprite* FindCDByName(const char* szName);//根据名字查找到对象
-	void 			AddMiss( int iDir,float fPosX,float fPosY ,int iOwner,float fAttack);
+	void 			AddMiss( int iDir,float fPosX,float fPosY ,int iOwner,float fAttack);//射出导弹
+	void			TankGG();//敌方坦克死亡
+	void 			HPLine();
+
 };
 //
 

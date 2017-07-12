@@ -7,6 +7,7 @@
 #include <Stdio.h>
 #include "CommonClass.h"
 #include "LessonX.h"
+#include "MapVT.h"
 ////////////////////////////////////////////////////////////////////////////////
 //
 //
@@ -26,6 +27,14 @@ CGameMain::CGameMain()
 	TankPlayer_Asuka 		= 	new CTankPlayer1("TankPlayer_Asuka");
 	TankPlayer_Rei 			= 	new CTankPlayer2("TankPlayer_Rei");
 	m_fGameTime				=	0;
+	m_iTankNum				=	0;
+	Hello					=   new CSprite("Hello");
+	Play					=	new CSprite("play");
+	Select					=	new CSprite("select");
+	Level1					=	new CSprite("Level1");
+	Level2					=	new CSprite("Level2");
+	Return					=	new CSprite("return");
+	m_bFocu					=	false;
 }
 //==============================================================================
 //
@@ -37,176 +46,11 @@ CGameMain::~CGameMain()
 //
 // 游戏关卡
 // [0] 坦克种类 [1] 坦克位置X [2] 坦克位置Y [3]坦克出现时间
-int Round_1[4][3]=
+int Round_1[5][4]=
 {
-	{1,2,3},{2,1,3},{1,4,0},{2,3,3}
+	{1,0,6,0},{2,2,9,0},{1,7,9,0},{2,9,6,0},{0,0,0,0}
 };
 
-//=============================================================================
-//
-// 游戏地图
-// [0] X坐标 [1] Y坐标 [2] 贴图编号 [3] 贴图性质
-int Map_1[157][4]=
-{
-{0,9,18,1},
-{1,9,18,1},
-{2,9,14,1},
-{3,9,18,1},
-{4,9,18,1},
-{5,9,1,2},
-{6,9,18,1},
-{7,9,14,1},
-{8,9,18,1},
-{9,9,18,1},
-{0,8,18,1},
-{1,8,18,1},
-{2,8,14,1},
-{3,8,18,1},
-{4,8,18,1},
-{5,8,1,2},
-{6,8,18,1},
-{7,8,14,1},
-{8,8,18,1},
-{9,8,18,1},
-{0,7,18,1},
-{1,7,18,1},
-{2,7,18,1},
-{3,7,18,1},
-{4,7,18,1},
-{5,7,1,1},
-{6,7,18,1},
-{7,7,18,1},
-{8,7,18,1},
-{9,7,18,1},
-{0,6,14,1},
-{1,6,14,1},
-{2,6,18,1},
-{3,6,18,1},
-{4,6,18,1},
-{5,6,1,2},
-{6,6,18,1},
-{7,6,18,1},
-{8,6,14,1},
-{9,6,14,1},
-{0,5,18,1},
-{1,5,18,1},
-{2,5,18,1},
-{3,5,18,1},
-{4,5,1,2},
-{5,5,1,2},
-{6,5,18,1},
-{7,5,18,1},
-{8,5,18,1},
-{9,5,18,1},
-{0,4,18,1},
-{1,4,18,1},
-{2,4,18,1},
-{3,4,1,2},
-{4,4,1,2},
-{5,4,18,1},
-{6,4,18,1},
-{7,4,14,2},
-{8,4,18,1},
-{9,4,18,1},
-{0,3,18,1},
-{1,3,18,1},
-{2,3,18,1},
-{3,3,1,2},
-{4,3,18,1},
-{5,3,18,1},
-{6,3,14,2},
-{7,3,14,2},
-{8,3,18,1},
-{9,3,18,1},
-{0,2,18,1},
-{1,2,14,2},
-{2,2,18,1},
-{3,2,1,1},
-{4,2,18,1},
-{5,2,18,1},
-{6,2,18,1},
-{7,2,18,1},
-{8,2,18,1},
-{9,2,18,1},
-{0,1,18,1},
-{1,1,14,2},
-{2,1,18,1},
-{3,1,1,2},
-{4,1,18,1},
-{5,1,18,1},
-{6,1,18,1},
-{7,1,18,1},
-{8,1,18,1},
-{9,1,18,1},
-{0,0,18,1},
-{1,0,18,1},
-{2,0,18,1},
-{3,0,1,2},
-{4,0,18,1},
-{5,0,18,1},
-{6,0,18,1},
-{7,0,14,1},
-{8,0,18,1},
-{9,0,18,1},
-{4,7,53,1},
-{6,7,55,1},
-{7,4,8,2},
-{6,3,32,2},
-{7,3,12,2},
-{1,2,8,2},
-{2,2,53,1},
-{4,2,55,1},
-{1,1,16,2},
-{7,3,23,2},
-{2,9,19,1},
-{5,9,15,2},
-{7,9,19,1},
-{2,8,10,1},
-{5,8,15,2},
-{7,8,10,1},
-{5,7,15,1},
-{0,6,26,1},
-{1,6,17,1},
-{5,6,15,2},
-{8,6,19,1},
-{9,6,26,1},
-{4,5,9,2},
-{5,5,12,2},
-{3,4,9,2},
-{4,4,12,2},
-{4,4,23,2},
-{3,3,15,2},
-{3,2,15,1},
-{3,1,15,2},
-{3,0,15,2},
-{7,0,34,1},
-{2,9,17,1},
-{5,9,13,2},
-{7,9,17,1},
-{2,8,17,1},
-{2,8,19,1},
-{5,8,13,2},
-{7,8,17,1},
-{7,8,19,1},
-{5,7,13,1},
-{0,6,10,1},
-{1,6,10,1},
-{1,6,26,1},
-{5,6,13,2},
-{8,6,26,1},
-{8,6,10,1},
-{9,6,10,1},
-{4,5,2,2},
-{5,5,23,2},
-{3,4,2,2},
-{3,3,13,2},
-{3,2,13,1},
-{3,1,13,2},
-{3,0,13,2},
-{3,2,54,1}, //qiao
-{5,7,54,1},
-
-};
 
 //==============================================================================
 //
@@ -218,6 +62,7 @@ void CGameMain::GameMainLoop( float	fDeltaTime )
 	switch( GetGameState() )
 	{
 		// 初始化游戏，清空上一局相关数据
+	
 	case 1:
 		{
 			GameInit();
@@ -241,8 +86,7 @@ void CGameMain::GameMainLoop( float	fDeltaTime )
 		}
 		break;
 
-		// 游戏结束/等待按空格键开始
-	case 0:
+	case 0:	// 游戏结束/等待按空格键开始
 	default:
 		break;
 	};
@@ -252,11 +96,31 @@ void CGameMain::GameMainLoop( float	fDeltaTime )
 // 每局开始前进行初始化，清空上一局相关数据
 void CGameMain::GameInit()
 {
+	//Level1->SetSpriteVisible(false);
+	/*if ( GetGameState()==0)
+		{
+			Select->SetSpriteVisible(false);
+			Level1->SetSpriteVisible(false);
+			Level2->SetSpriteVisible(false);
+			Return->SetSpriteVisible(false);
+			//Hello->SetSpriteVisible(true);
+			//Play->SetSpriteVisible(true);
+		}
+	else if ( GetGameState()==1)
+		{
+			Hello->SetSpriteVisible(false);
+			Play->SetSpriteVisible(false);
+			Select->SetSpriteVisible(false);
+			Level1->SetSpriteVisible(true);
+			Level2->SetSpriteVisible(true);
+			Return->SetSpriteVisible(true);
+		}*/
 	TankPlayer_Asuka->Init();
 	TankPlayer_Rei->Init();
 	AddEnemy(Round_1);
 	LoadGameMap(Map_1,1);
 	ShowMeTheInfo(1);
+	m_iTankNum = EnemyBox.size();
 }
 //=============================================================================
 //
@@ -264,10 +128,12 @@ void CGameMain::GameInit()
 void CGameMain::GameRun( float fDeltaTime )
 {
 	m_fGameTime+=fDeltaTime;
-	TankPlayer_Asuka->TankLoop(fDeltaTime);
-	TankPlayer_Rei->TankLoop(fDeltaTime);
-	//ChangeTheInfo();
+	if (TankPlayer_Asuka->GetTanksLife())
+		TankPlayer_Asuka->TankLoop(fDeltaTime);
+	if (TankPlayer_Rei->GetTanksLife())
+		TankPlayer_Rei->TankLoop(fDeltaTime);
 	//敌人出生
+	HPLine();//血条
 	for (int i=0;i<EnemyBox.size();i++)
 		{
 			if (EnemyBox[i]->GetEnemyBornTime()<=m_fGameTime&&EnemyBox[i]->GetEnemyBorn()==false)
@@ -277,18 +143,10 @@ void CGameMain::GameRun( float fDeltaTime )
 		}
 	for (i=0;i<EnemyBox.size();i++)
 		{
-			if (EnemyBox[i]->GetEnemyBorn()==true)
+			if (EnemyBox[i]->GetEnemyBorn()==true&&EnemyBox[i]->GetTanksLife())
 				{
 					EnemyBox[i]->Loop(fDeltaTime);
 				}
-		}
-	//划线
-	for (i=0;i<11;i+=2)
-		{
-			CSystem::DrawLine(-37.5,-3.75*i,37.5,-3.75*i,1,1,255,0,0,255);
-			CSystem::DrawLine(-37.5,3.75*i,37.5,3.75*i,1,1,255,0,0,255);
-			CSystem::DrawLine(-3.75*i,-37.5,-3.75*i,37.5,1,1,255,0,0,255);
-			CSystem::DrawLine(3.75*i,-37.5,3.75*i,37.5,1,1,255,0,0,255);
 		}
 }
 //=============================================================================
@@ -303,7 +161,18 @@ void CGameMain::GameEnd()
 // 参数 fMouseX, fMouseY：为鼠标当前坐标
 void CGameMain::OnMouseMove( const float fMouseX, const float fMouseY )
 {
-	
+	if (GetGameState()==0&&Play->IsPointInSprite(fMouseX,fMouseY)&&m_bFocu==false)
+		{
+			m_bFocu=true;
+			Play->SetSpriteWidth(Play->GetSpriteWidth()*1.2);
+			Play->SetSpriteHeight(Play->GetSpriteHeight()*1.2);
+		}
+	if (GetGameState()==0&&!Play->IsPointInSprite(fMouseX,fMouseY)&&m_bFocu==true)
+		{
+			m_bFocu=false;
+			Play->SetSpriteWidth(Play->GetSpriteWidth()/1.2);
+			Play->SetSpriteHeight(Play->GetSpriteHeight()/1.2);
+		}
 }
 //==========================================================================
 //
@@ -312,7 +181,11 @@ void CGameMain::OnMouseMove( const float fMouseX, const float fMouseY )
 // 参数 fMouseX, fMouseY：为鼠标当前坐标
 void CGameMain::OnMouseClick( const int iMouseType, const float fMouseX, const float fMouseY )
 {
-	
+	if (GetGameState()==0&&Play->IsPointInSprite(fMouseX,fMouseY)&&m_bFocu==true&&iMouseType==0)
+		{
+			Play->SetSpriteWidth(Play->GetSpriteWidth()/1.2);
+			Play->SetSpriteHeight(Play->GetSpriteHeight()/1.2);
+		}
 }
 //==========================================================================
 //
@@ -321,7 +194,10 @@ void CGameMain::OnMouseClick( const int iMouseType, const float fMouseX, const f
 // 参数 fMouseX, fMouseY：为鼠标当前坐标
 void CGameMain::OnMouseUp( const int iMouseType, const float fMouseX, const float fMouseY )
 {
-	
+	if (GetGameState()==0&&Play->IsPointInSprite(fMouseX,fMouseY)&&m_bFocu==true&&iMouseType==0)
+		{
+			SetGameState(1);
+		}
 }
 //==========================================================================
 //
@@ -352,6 +228,8 @@ void CGameMain::OnKeyDown( const int iKey, const bool bAltPress, const bool bShi
 		TankPlayer_Rei->TP();
 	if (iKey==KEY_NUMPAD3)
 		TankPlayer_Rei->Miss();
+	if (iKey==KEY_X)
+		TankPlayer_Asuka->Wudi();
 }
 //==========================================================================
 //
@@ -477,19 +355,21 @@ void CGameMain::AddBullet( int iDir,float fPosX,float fPosY ,int iOwner,float fA
 //
 // 将敌人加入关卡
 // 参数 round: 关卡
-void CGameMain::AddEnemy(int round[][3])
+void CGameMain::AddEnemy(int round[][4])
 {
 	for (int i=0;round[i][0];i++)
 		{
 			int enemyspecie= round[i][0];
-			int bornplace = round[i][1];
-			int borntime = round[i][2];
+			int bornplaceX = round[i][1];
+			int bornplaceY = round[i][2];
+			int borntime = round[i][3];
 			char* szName = CSystem::MakeSpriteName("Enemy_",i);
 			CTankEnemy* enemy = new CTankEnemy(szName);
 			char* tmpName = CSystem::MakeSpriteName("Enemy",enemyspecie);
 			enemy->CloneSprite(tmpName);
 			enemy->SetEnemySpecies(enemyspecie);
-			enemy->SetEnemyPlace(bornplace);
+			enemy->SetNewPosX(bornplaceX);
+			enemy->SetNewPosY(bornplaceY);
 			enemy->SetEnemtBornTime(borntime);
 			EnemyBox.push_back(enemy);
 		}
@@ -506,7 +386,7 @@ void CGameMain::LoadGameMap(int map[][4],int num)
 	char* mapnum_1 = strcat(mapnum,"_");
 	char* mapnum_round = CSystem::MakeSpriteName("Map_Round_",num);
 	char* mapnum_round_1 = strcat(mapnum_round,"_");
-	for (int i=0;map[i][3]!='\0';i++)
+	for (int i=0;map[i][3];i++)
 		{
 			int px = map[i][0];
 			int py = map[i][1];
@@ -622,40 +502,11 @@ void CGameMain::ShowMeTheInfo(int num)
 	MissCD->CloneSprite("missCD");
 	MissCD->SetSpritePosition(44.375,33.75);
 	InfoBox.push_back(MissCD);
-}
-//===========================================================================
-//
-// 改变信息
-void CGameMain::ChangeTheInfo()
-{
-	if (TankPlayer_Asuka->GetFireState()==false)
-		FindCDByName("FireCD1")->AnimateSpritePlayAnimation("FireCD_0",true);
-	else if (TankPlayer_Asuka->GetFireState()==true)
-		FindCDByName("FireCD1")->AnimateSpritePlayAnimation("FireCD_1",true);
-	
-	if (TankPlayer_Rei->GetFireState()==false)
-		FindCDByName("FireCD2")->AnimateSpritePlayAnimation("FireCD_0",true);
-	else if (TankPlayer_Rei->GetFireState()==true)
-		FindCDByName("FireCD2")->AnimateSpritePlayAnimation("FireCD_1",true);
 
-	/*if (TankPlayer_Rei->GetFireState()==false)
-	CSprite* HealCD1 = new CSprite("HealCD1");
-	HealCD1->CloneSprite("HealCD");
-	HealCD1->SetSpritePosition(-44.375,11.25);
-	InfoBox.push_back(HealCD1);
-	CSprite* HealCD2 = new CSprite("HealCD2");
-	HealCD2->CloneSprite("HealCD");
-	HealCD2->SetSpritePosition(44.375,11.25);
-	InfoBox.push_back(HealCD2);
-
-	CSprite* SpeedCD1 = new CSprite("SpeedCD1");
-	SpeedCD1->CloneSprite("SpeedCD");
-	SpeedCD1->SetSpritePosition(-44.375,18.75);
-	InfoBox.push_back(SpeedCD1);
-	CSprite* SpeedCD2 = new CSprite("SpeedCD2");
-	SpeedCD2->CloneSprite("SpeedCD");
-	SpeedCD2->SetSpritePosition(44.375,18.75);
-	InfoBox.push_back(SpeedCD2);*/
+	CAnimateSprite* WudiCD = new CAnimateSprite("wudiCD");
+	WudiCD->CloneSprite("wudiCD");
+	WudiCD->SetSpritePosition(-44.375,33.75);
+	InfoBox.push_back(WudiCD);
 }
 //===========================================================================
 //
@@ -698,4 +549,26 @@ void CGameMain::AddMiss( int iDir,float fPosX,float fPosY ,int iOwner,float fAtt
 			pBullet->SetOwner(0); //0表示敌方坦克发射的子弹
 		}
 	BulletBox.push_back(pBullet);
+}
+//===========================================================================
+//
+// 敌方坦克死亡
+void CGameMain::TankGG()
+{
+	m_iTankNum--;
+}
+//===========================================================================
+//
+// 显示血条
+void CGameMain::HPLine()
+{
+	float X1 = TankPlayer_Asuka->GetSpritePositionX()-TankPlayer_Asuka->GetSpriteHeight()/2;
+	float Y1 = TankPlayer_Asuka->GetSpritePositionY()-TankPlayer_Asuka->GetSpriteHeight()/2-0.5;
+	CSystem::DrawRect(X1,Y1,X1+TankPlayer_Asuka->GetSpriteHeight(),Y1+0.5,1,0,255,255,255,255);
+	CSystem::DrawLine(X1,Y1+0.25,X1+TankPlayer_Asuka->GetSpriteHeight()*TankPlayer_Asuka->GetHp()/100,Y1+0.25,3,0,255,0,0,255);
+
+	float X2 = TankPlayer_Rei->GetSpritePositionX()-TankPlayer_Rei->GetSpriteHeight()/2;
+	float Y2 = TankPlayer_Rei->GetSpritePositionY()-TankPlayer_Rei->GetSpriteHeight()/2-0.5;
+	CSystem::DrawRect(X2,Y2,X2+TankPlayer_Rei->GetSpriteHeight(),Y2+0.5,1,0,255,255,255,255);
+	CSystem::DrawLine(X2,Y2+0.25,X2+TankPlayer_Rei->GetSpriteHeight()*TankPlayer_Rei->GetHp()/100,Y2+0.25,3,0,255,0,0,255);
 }

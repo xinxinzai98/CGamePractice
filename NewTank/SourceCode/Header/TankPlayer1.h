@@ -18,7 +18,13 @@ private:
 	bool m_bTransState;
 	float m_fTransTime;
 	float m_fTransCCTime;
-	float m_fTranFireCount;
+
+	float m_fWudiCD;
+	bool m_bWudiState;
+	float m_fWudiTime;
+	float m_fWudiCCTime;
+
+
 public:
 	//main
 	CTankPlayer1(const char* szname);
@@ -31,6 +37,7 @@ public:
 	void Speed();
 	void Trans();
 	void TransFire();
+	void Wudi();
 	//Get
 	
 	//Set

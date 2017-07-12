@@ -10,8 +10,6 @@
 
 CTankPlayer::CTankPlayer(const char* szname):CWeapon(szname)
 {
-    m_fSkillOneCD = 0.f;
-	m_fSkillTwoCD = 0.f;
     m_fSkillHealCD = 20.0;
     m_fMaxSpeed = 0.f;
     m_iTankState = 0;
@@ -27,43 +25,13 @@ CTankPlayer::CTankPlayer(const char* szname):CWeapon(szname)
     m_fFireCD = 1.0;
     m_fSpeedCD = 15.0;
     m_fSpeedCCTime = 10.0;
+    m_fMaxHP = 100;
+    m_bTanksLife = true;
 }
 
 CTankPlayer::~CTankPlayer()
 {
 }
-
-/*void CTankPlayer::TankLoop(float fDeltaTime)
-{
-    if (m_iTankState==2||m_bSkillHealState==false)
-        m_fHealTime+=fDeltaTime;
-    if (m_fHealTime>=m_fSkillHealPlayTime)
-        SetTankState(1);
-    if (m_fHealTime>=m_fSkillHealCD)
-        {
-            m_fHealTime = 0.f;
-            SetSkillHealState(true);
-        }
-    if(GetSpriteColorGreen()!=255)
-    {
-        m_fCHangeColorTime+=fDeltaTime;
-        if (m_fCHangeColorTime>0.5)
-        {
-            m_fCHangeColorTime = 0.f;
-            SetSpriteColorGreen(255);
-            SetSpriteColorBlue(255);
-        }
-    }
-    if (GetFireState()==false)
-    {
-        m_fFireTime+=fDeltaTime;
-        if (m_fFireTime>GetFireCD())
-            {
-                SetFireState(true);
-                m_fFireTime = 0.f;
-            }
-    }
-}*/
 void CTankPlayer::TankBack()
 {
     float x =  GetSpritePositionX();
@@ -102,10 +70,20 @@ void CTankPlayer::OnColTank()
 }
 void CTankPlayer::OnColBullet(int owner,float attack)
 {
-    if (owner==0)
+    if (owner==0&&GetTankState()!=5)
         {
             SetHp(GetHp()-attack);
             SetSpriteColorGreen(120);
             SetSpriteColorBlue(120);
+        }
+}
+void CTankPlayer::IsDead()
+{
+    if (GetHp()<1)
+        {
+            m_bTanksLife = false;
+            AnimateSpritePlayAnimation("Boom",false);
+            SetSpriteLinearVelocity(0,0);
+            SetSpriteCollisionActive(0,0);
         }
 }

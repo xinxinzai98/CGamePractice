@@ -28,6 +28,7 @@ CTankPlayer2::~CTankPlayer2()
 
 void CTankPlayer2::Init()
 {
+	SetHp(100);
     SetMaxSpeed(10);
     SetSpritePosition(30,0);
     SetTankState(1);
@@ -38,6 +39,7 @@ void CTankPlayer2::Init()
 }
 void CTankPlayer2::OnMove(int iKey, bool bPress)
 {
+	if (GetTanksLife()){
 	if(bPress==true&&GetTankState()==1)
 		{
 			switch (iKey)
@@ -127,10 +129,11 @@ void CTankPlayer2::OnMove(int iKey, bool bPress)
 			}
 			SetSpriteLinearVelocity(GetSpeedX(),GetSpeedY());
 		}
+	}
 }
 void CTankPlayer2::OnFire()
 {
-	if (GetTankState()==1&&GetFireState()==true)
+	if (GetTankState()==1&&GetFireState()==true&&GetTanksLife())
 	{
 		float x,y;
 		x = GetSpritePositionX();
@@ -174,8 +177,12 @@ void CTankPlayer2::OnFire()
 }
 void CTankPlayer2::OnHeal()
 {
-    if (GetSkillHealState())
+    if (GetSkillHealState()&&GetTanksLife())
         {
+			if (GetHp()>=80)
+				SetHp(100);
+			else
+				SetHp(GetHp()+20);
             SetSkillHealState(false);
             SetTankState(2);
 			switch (GetDir())
@@ -208,6 +215,8 @@ void CTankPlayer2::OnHeal()
 }
 void CTankPlayer2::TankLoop(float fDeltaTime)
 {
+	IsDead();
+	if (GetTanksLife()){
     if (GetTankState()==2||GetSkillHealState()==false)
         SetHealTime(GetHealTime()+fDeltaTime);
     if (GetHealTime()>=GetSkillHealPlayTime())
@@ -276,10 +285,11 @@ void CTankPlayer2::TankLoop(float fDeltaTime)
 				g_GameMain.FindCDByName("missCD")->AnimateSpritePlayAnimation("Missile_1",false);
             }
     }
+	}
 }
 void CTankPlayer2::Speed()
 {
-	if (GetSpeedState())
+	if (GetSpeedState()&&GetTanksLife())
 		{
 			SetSpeedState(false);
 			SetMaxSpeed(20);
@@ -289,7 +299,7 @@ void CTankPlayer2::Speed()
 }
 void CTankPlayer2::TP()
 {
-	if (m_bTPState)
+	if (m_bTPState&&GetTanksLife())
 		{
 			m_bTPState = false;
 			AnimateSpritePlayAnimation("TP",false);
@@ -329,7 +339,7 @@ void CTankPlayer2::flash()
 }
 void CTankPlayer2::Miss()
 {
-	if (m_bMissState)
+	if (m_bMissState&&GetTanksLife())
 		{
 			m_bMissState = false;
 			float x,y;
