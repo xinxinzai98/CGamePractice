@@ -1,0 +1,9 @@
+.git
+node_modules
+client/dist
+packages/simulation/dist
+data
+NewTank
+Chartlet
+work
+outputs

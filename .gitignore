@@ -1,0 +1,12 @@
+.DS_Store
+node_modules/
+web/output/
+
+/data/
+
+client/dist/
+packages/simulation/dist/
+.vite/
+
+client/src/**/*.js
+packages/simulation/src/**/*.js
