@@ -176,7 +176,10 @@ export function App() {
   }, [muted, volume]);
   useEffect(() => {
     if (view === 'loading' && assetsReady) {
-      const t = setTimeout(() => setView(afterLoading.current), 350);
+      const t = setTimeout(() => {
+        if (afterLoading.current === 'practice') practice(true);
+        else setView(afterLoading.current);
+      }, 350);
       return () => clearTimeout(t);
     }
   }, [view, assetsReady]);
@@ -996,7 +999,7 @@ export function App() {
             onClose={() => setAuthOpen(false)}
             onPractice={() => {
               setAuthOpen(false);
-              loadInto('lobby');
+              loadInto('practice');
             }}
           />
         )}
