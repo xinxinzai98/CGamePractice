@@ -6,7 +6,7 @@
 
 ## 启动
 
-需要 Docker Engine 和 Compose 插件。仓库没有打包任何玩家账号或数据库；首次启动得到空玩家库，可以正常注册。
+需要 Docker Engine、Compose 和 Buildx 插件。可先用 `docker info`、`docker compose version`、`docker buildx version` 确认安装完整。仓库没有打包任何玩家账号或数据库；首次启动得到空玩家库，可以正常注册。
 
 ```sh
 docker compose up -d --build --wait
@@ -98,6 +98,17 @@ Compose 没有自动申请证书或配置用户服务器，也没有公开测试
 
 ## 本次验证范围
 
-Compose 配置已通过解析校验，默认端口、独立项目名、端口覆盖和 HTTPS 环境变量均已核对。当前机器的 Docker 引擎未运行，独立 Colima 测试环境的启动需要明确授权，因此尚未执行 Linux 镜像构建、容器内登录与重建后存档回读；这些不能用静态配置校验代替。
+2026-09-10 已在独立 Colima 环境完成实际构建和运行，使用 Docker Engine 29.5.2、Compose 5.5.0、Node 22.23.2。Linux ARM64 原生执行、Linux AMD64 通过 QEMU 执行，两套镜像均通过以下验证：
+
+- 全新命名卷启动并达到 healthy，网页、图标和战斗素材可访问。
+- 注册两个独立账号，保存技能树、外观和装备；两客户端 WebSocket 组队、权威射击和暂停正常。
+- 同一抽奖操作重复发送不重复扣券，容器重建后再次核实也返回原奖励。
+- `--force-recreate` 确实更换容器 ID，但仍使用原数据卷；重新登录后完整档案逐项一致。
+- 容器内在线备份、恢复到独立目录并登录回读成功；正常停止退出码为 0，再启动后档案保留。
+- 服务器以 UID 1000 运行，数据库属主相同、权限为 `0600`，容器根文件系统为只读。
+
+另验证了导入空数据卷：与导出的 SQLite 快照字节一致，且再次导入会拒绝覆盖已有库。测试只使用临时账号和数据卷，没有迁移或修改现有 8178 本地玩家档案。容器重建后验收会重新建立 HTTP 连接，并等待宿主机映射端口就绪，避免复用旧连接。
+
+这次验证不包含用户服务器上的域名、HTTPS 代理或公网连通性；这些仍需在实际部署时验收。
 
 参考：[Compose 服务配置](https://docs.docker.com/reference/compose-file/services/)、[数据卷生命周期](https://docs.docker.com/engine/storage/volumes/)。

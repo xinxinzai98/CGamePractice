@@ -31,7 +31,7 @@ npm run dev
 
 ## Docker 运行
 
-已有 Docker Engine 和 Compose 时，在仓库根目录执行：
+已有 Docker Engine、Compose 和 Buildx 插件时，在仓库根目录执行：
 
 ```sh
 docker compose up -d --build --wait
