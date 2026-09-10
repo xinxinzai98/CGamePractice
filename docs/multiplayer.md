@@ -85,11 +85,10 @@ HOST=0.0.0.0 PORT=8178 npm start
 
 当前未执行公网部署。需要支持长期运行Node.js的服务器；静态GitHub Pages不能运行房间服务。
 
-仓库提供多阶段Dockerfile，构建客户端和共享规则后仅运行服务器。示例：
+仓库提供多阶段Dockerfile和Compose配置，构建客户端和共享规则后仅运行服务器。推荐按 [Docker部署手册](docker.md) 管理同一份命名数据卷。接好HTTPS代理后启动：
 
 ```sh
-docker build -t dawn-game .
-docker run -d --name dawn-game --restart unless-stopped -p 127.0.0.1:8178:8178 -v dawn-data:/app/data -e DAWN_SECURE_COOKIES=1 dawn-game
+DAWN_SECURE_COOKIES=1 docker compose up -d --build --wait
 ```
 
 公网入口使用HTTPS反向代理，页面自动使用wss；`DAWN_SECURE_COOKIES=1`开启Secure登录Cookie，此时必须从HTTPS入口访问。直接本地HTTP测试时不设置该变量。Docker镜像内置`GET /ready`健康检查：`/health`只证明进程存活，`/ready`还检查客户端构建和数据库是否可读，失败返回503。

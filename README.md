@@ -29,6 +29,16 @@ npm run dev
 
 `127.0.0.1` 仅指本机。当前未做公网部署；以后部署到服务器时，两位玩家访问同一站点即可组队。见 [联网与部署说明](docs/multiplayer.md)。
 
+## Docker 运行
+
+已有 Docker Engine 和 Compose 时，在仓库根目录执行：
+
+```sh
+docker compose up -d --build --wait
+```
+
+默认地址仍为 `http://127.0.0.1:8178`。账号保存在独立命名卷中，重建容器保留存档；新卷初次启动需要注册账号。若原 Node 版本已占用端口，使用 `DAWN_HTTP_PORT=8188 docker compose up -d --build --wait`。环境变量、现有存档导入、备份和更新流程见 [Docker 手册](docs/docker.md)。
+
 ## 当前结构
 
 | 目录 | 用途 |
