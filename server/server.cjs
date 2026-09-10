@@ -6,6 +6,7 @@ const http = require('node:http'),
 const { WebSocketServer, WebSocket } = require('ws');
 const D = require('../packages/simulation/dist/index.js');
 const { createProfiles } = require('./profiles.cjs');
+const { RequestError } = require('./errors.cjs');
 const CLIENT = path.resolve(__dirname, '../client/dist');
 const send = (ws, data) => {
   if (ws?.readyState === WebSocket.OPEN && ws.bufferedAmount < 262144)
@@ -16,8 +17,7 @@ function createServer({
   maxRooms = 30,
   profilesFactory = createProfiles,
   profilesFile = path.resolve(__dirname, '../data/profiles.sqlite'),
-  webRoot = process.env.DAWN_CLIENT_DIR ||
-    (fs.existsSync(path.join(CLIENT, 'index.html')) ? CLIENT : path.resolve(__dirname, '../web')),
+  webRoot = process.env.DAWN_CLIENT_DIR || CLIENT,
 } = {}) {
   const WEB = path.resolve(webRoot);
   const rooms = new Map(),
@@ -105,7 +105,7 @@ function createServer({
         if (!user) return json(res, 401, { error: '请先登录' });
         if (req.url === '/api/build') {
           profiles.mutate(user, (p) => {
-            if (!['Asuka', 'Rei'].includes(body.character)) throw Error('角色无效');
+            if (!['Asuka', 'Rei'].includes(body.character)) throw new RequestError('角色无效');
             p.characters[body.character].nodes = progression().validateBuild(
               body.character,
               body.nodes,
@@ -117,9 +117,9 @@ function createServer({
         if (req.url === '/api/shop') {
           profiles.mutate(user, (p) => {
             const item = equipment().ITEMS.find((i) => i.id === body.itemId);
-            if (!item) throw Error('装备不存在');
-            if (p.inventory.includes(item.id)) throw Error('已经拥有此装备');
-            if (p.coins < item.price) throw Error('金币不足');
+            if (!item) throw new RequestError('装备不存在');
+            if (p.inventory.includes(item.id)) throw new RequestError('已经拥有此装备');
+            if (p.coins < item.price) throw new RequestError('金币不足');
             p.coins -= item.price;
             p.inventory.push(item.id);
           });
@@ -127,14 +127,14 @@ function createServer({
         }
         if (req.url === '/api/equip') {
           profiles.mutate(user, (p) => {
-            if (!['Asuka', 'Rei'].includes(body.character)) throw Error('角色无效');
+            if (!['Asuka', 'Rei'].includes(body.character)) throw new RequestError('角色无效');
             const validSlots = new Set(equipment().ITEMS.map((i) => i.slot));
-            if (!validSlots.has(body.slot)) throw Error('装备槽无效');
+            if (!validSlots.has(body.slot)) throw new RequestError('装备槽无效');
             if (body.itemId === null) p.equipment[body.character][body.slot] = null;
             else {
               const item = equipment().ITEMS.find((i) => i.id === body.itemId);
               if (!item || item.slot !== body.slot || !p.inventory.includes(item.id))
-                throw Error('尚未拥有该槽位装备');
+                throw new RequestError('尚未拥有该槽位装备');
               p.equipment[body.character][body.slot] = item.id;
             }
           });
@@ -147,7 +147,7 @@ function createServer({
               !['AP', 'HE', 'HESH'].includes(body.ammo) ||
               !['blade', 'spear'].includes(body.melee)
             )
-              throw Error('角色、弹种或近战武器无效');
+              throw new RequestError('角色、弹种或近战武器无效');
             p.loadouts[body.character] = { ammo: body.ammo, melee: body.melee };
           });
           return json(res, 200, publicUser(user));
@@ -155,7 +155,7 @@ function createServer({
         if (req.url === '/api/appearance') {
           profiles.mutate(user, (p) => {
             if (!['Asuka', 'Rei'].includes(body.pilot) || typeof body.reducedMotion !== 'boolean')
-              throw Error('看板角色或动态偏好无效');
+              throw new RequestError('看板角色或动态偏好无效');
             p.appearance = { pilot: body.pilot, reducedMotion: body.reducedMotion };
           });
           return json(res, 200, publicUser(user));
@@ -165,7 +165,7 @@ function createServer({
           return json(res, 200, { ...publicUser(user), reward });
         }
         if (req.url === '/api/tutorial') {
-          if (body.complete !== true) throw Error('教学状态无效');
+          if (body.complete !== true) throw new RequestError('教学状态无效');
           profiles.mutate(user, (p) => {
             if (!p.tutorialComplete) {
               p.tutorialComplete = true;
@@ -176,7 +176,10 @@ function createServer({
         }
         return json(res, 404, { error: '接口不存在' });
       } catch (e) {
-        return json(res, 400, { error: e.message });
+        if (e instanceof RequestError || e instanceof D.ValidationError)
+          return json(res, 400, { error: e.message });
+        console.error('API request failed:', e);
+        return json(res, 500, { error: '服务器暂时无法完成请求，请稍后重试' });
       }
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -187,6 +190,11 @@ function createServer({
     if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, rooms: rooms.size }));
+      return;
+    }
+    if (!fs.existsSync(path.join(WEB, 'index.html'))) {
+      res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('客户端尚未构建。请先构建 client/dist，或显式设置 DAWN_CLIENT_DIR。');
       return;
     }
     let file;
@@ -302,11 +310,9 @@ function createServer({
     };
   }
   function start(room) {
-    const upgrades = Object.fromEntries(room.slots.map((s) => [s.character, s.upgrades]));
     const builds = Object.fromEntries(room.slots.map((s) => [s.character, s.nodes || []]));
     room.game = new D.Game(room.map, {
       coop: true,
-      upgrades,
       nodes: builds,
       loadouts: Object.fromEntries(
         room.slots.map((s) => [
@@ -377,17 +383,10 @@ function createServer({
       ws: null,
       ready: false,
       token: crypto.randomBytes(24).toString('hex'),
-      upgrades: { power: 0, mobility: 0, support: 0 },
       input: {},
       lastInput: 0,
       disconnectedAt: 0,
     };
-  }
-  function cleanUpgrades(value) {
-    const result = {};
-    for (const k of ['power', 'mobility', 'support'])
-      result[k] = D.clamp(Math.floor(Number(value?.[k]) || 0), 0, 3);
-    return result;
   }
   wss.on('connection', (ws, req) => {
     ws.username = profiles.get(req)?.username || null;
@@ -410,7 +409,7 @@ function createServer({
       let m;
       try {
         m = JSON.parse(raw);
-        if (!m || typeof m !== 'object') throw Error('invalid');
+        if (!m || typeof m !== 'object') throw new RequestError('invalid');
       } catch {
         send(ws, { type: 'error', message: '消息格式无效' });
         return;
@@ -422,8 +421,8 @@ function createServer({
           return;
         }
         if (m.type === 'create') {
-          if (room) throw Error('你已经在房间中');
-          if (rooms.size >= maxRooms) throw Error('当前房间已满，请稍后再试');
+          if (room) throw new RequestError('你已经在房间中');
+          if (rooms.size >= maxRooms) throw new RequestError('当前房间已满，请稍后再试');
           let code;
           do {
             code = crypto.randomBytes(3).toString('hex').toUpperCase();
@@ -449,29 +448,29 @@ function createServer({
           return;
         }
         if (m.type === 'join') {
-          if (room) throw Error('你已经在房间中');
+          if (room) throw new RequestError('你已经在房间中');
           const code = String(m.code || '').toUpperCase();
           room = rooms.get(code);
-          if (!room) throw Error('房间不存在或已关闭');
-          if (room.slots[1]) throw Error('房间已满');
+          if (!room) throw new RequestError('房间不存在或已关闭');
+          if (room.slots[1]) throw new RequestError('房间已满');
           room.slots[1] = newSlot(ws, room.slots[0].character === 'Asuka' ? 'Rei' : 'Asuka');
           attach(ws, room, 1);
           return;
         }
         if (m.type === 'resume') {
-          if (room) throw Error('你已经在房间中');
+          if (room) throw new RequestError('你已经在房间中');
           room = rooms.get(String(m.code || ''));
-          if (!room) throw Error('房间已结束，请重新创建');
+          if (!room) throw new RequestError('房间已结束，请重新创建');
           const slot = room.slots.findIndex((s) => s && s.token === m.token);
           if (slot < 0 || room.slots[slot].ws || room.slots[slot].username !== ws.username)
-            throw Error('无法恢复此座位');
+            throw new RequestError('无法恢复此座位');
           attach(ws, room, slot);
           return;
         }
-        if (!room) throw Error('请先创建或加入房间');
+        if (!room) throw new RequestError('请先创建或加入房间');
         const s = room.slots[ws.slot];
         if (m.type === 'configure') {
-          if (ws.slot !== 0 || room.game) throw Error('只有房主能在战前选择关卡');
+          if (ws.slot !== 0 || room.game) throw new RequestError('只有房主能在战前选择关卡');
           const mission = m.mission ?? room.mission,
             stage = m.stage ?? room.stage,
             difficulty = m.difficulty ?? room.difficulty;
@@ -484,7 +483,7 @@ function createServer({
             stage > 2 ||
             !['relaxed', 'normal', 'hard'].includes(difficulty)
           )
-            throw Error('关卡配置无效');
+            throw new RequestError('关卡配置无效');
           room.mission = mission;
           room.stage = stage;
           room.difficulty = difficulty;
@@ -495,9 +494,10 @@ function createServer({
           });
           lobby(room);
         } else if (m.type === 'choose') {
-          if (room.game || !['Asuka', 'Rei'].includes(m.character)) throw Error('当前无法选择角色');
+          if (room.game || !['Asuka', 'Rei'].includes(m.character))
+            throw new RequestError('当前无法选择角色');
           const other = room.slots.find((x) => x && x !== s && x.character === m.character);
-          if (other?.ready) throw Error('请队友先取消准备再交换角色');
+          if (other?.ready) throw new RequestError('请队友先取消准备再交换角色');
           if (other) {
             other.character = s.character;
             other.ready = false;
@@ -506,7 +506,7 @@ function createServer({
           s.ready = false;
           lobby(room);
         } else if (m.type === 'ready') {
-          if (room.game) throw Error('战斗已经开始');
+          if (room.game) throw new RequestError('战斗已经开始');
           s.ready = !!m.ready;
           const user = profiles.byName(s.username);
           s.nodes = user
@@ -516,7 +516,6 @@ function createServer({
                 user.profile.characters[s.character].xp,
               )
             : [];
-          s.upgrades = user ? {} : cleanUpgrades(m.upgrades);
           s.loadout = user
             ? { ...user.profile.loadouts[s.character] }
             : { ammo: 'AP', melee: s.character === 'Asuka' ? 'blade' : 'spear' };
@@ -541,10 +540,10 @@ function createServer({
             broadcast(room, snapshot(room));
           }
         } else if (m.type === 'prepare') {
-          if (ws.slot !== 0) throw Error('请等待房主返回战前准备');
+          if (ws.slot !== 0) throw new RequestError('请等待房主返回战前准备');
           if (!room.game || !['won', 'lost'].includes(room.game.status))
-            throw Error('当前战斗尚未结束');
-          if (!room.awarded) throw Error('战绩仍在保存，请稍后再试');
+            throw new RequestError('当前战斗尚未结束');
+          if (!room.awarded) throw new RequestError('战绩仍在保存，请稍后再试');
           room.game = null;
           room.round = null;
           room.paused = false;
@@ -556,18 +555,18 @@ function createServer({
           broadcast(room, { type: 'briefing' });
           lobby(room);
         } else if (m.type === 'next' || m.type === 'retry') {
-          if (ws.slot !== 0) throw Error('请等待房主选择下一场战斗');
+          if (ws.slot !== 0) throw new RequestError('请等待房主选择下一场战斗');
           if (!room.game || !['won', 'lost'].includes(room.game.status))
-            throw Error('当前战斗尚未结束');
-          if (!room.awarded) throw Error('战绩仍在保存，请稍后再试');
-          if (room.slots.some((s) => !s?.ws)) throw Error('等待队友重连');
+            throw new RequestError('当前战斗尚未结束');
+          if (!room.awarded) throw new RequestError('战绩仍在保存，请稍后再试');
+          if (room.slots.some((s) => !s?.ws)) throw new RequestError('等待队友重连');
           if (m.type === 'next') {
             if (
               room.custom ||
               room.game.status !== 'won' ||
               (room.mission === 3 && room.stage === 2)
             )
-              throw Error('没有下一关');
+              throw new RequestError('没有下一关');
             room.stage++;
             if (room.stage > 2) {
               room.stage = 0;

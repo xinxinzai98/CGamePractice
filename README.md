@@ -82,3 +82,5 @@ npm test
 看板目前为独立单图网格动画适配，不能等同于完整 Live2D 分层模型；音乐为合成配乐。专业角色动画、美术一致性和关卡节奏仍需后续制作与试玩。
 
 [架构迁移记录](docs/phaser-migration-20260910.md) · [原方案](docs/architecture-plan-20260910.md) · [原作介绍](docs/info.md)
+
+[防御性编程审计修复说明](docs/defensive-programming-fixes.md)：协议边界严格解析、旧兼容删除、103 项回归验证。

@@ -1,39 +1,21 @@
-import type { Character, GameMap, GameState, InputState } from '@dawn/simulation';
-export interface Seat {
-  character: Character;
-  username?: string;
-  connected: boolean;
-  ready: boolean;
-}
-export interface Lobby {
-  code: string;
-  mission: number;
-  stage: number;
-  difficulty: 'relaxed' | 'normal' | 'hard';
-  map: string;
-  slots: (Seat | null)[];
-}
-export interface StartMessage {
-  map: GameMap;
-  mission: number;
-  stage: number;
-  difficulty: string;
-  characters: Character[];
-  round: string;
-}
+import { ProtocolError, type InputState } from '@dawn/simulation';
+import {
+  parseRoomMessage,
+  type Lobby,
+  type StartMessage,
+  type NetworkState,
+} from './room-protocol';
+export type { Seat, Lobby, StartMessage } from './room-protocol';
 export interface RoomCallbacks {
   joined: (code: string, slot: number) => void;
   lobby: (lobby: Lobby) => void;
   start: (message: StartMessage) => void;
-  state: (state: GameState, paused: boolean, waiting: boolean, rewardsSaved: boolean) => void;
+  state: (state: NetworkState, paused: boolean, waiting: boolean, rewardsSaved: boolean) => void;
   error: (message: string) => void;
   ended: (message: string) => void;
   latency: (milliseconds: number) => void;
   connection: (status: 'connecting' | 'connected' | 'reconnecting' | 'closed') => void;
   briefing: () => void;
-}
-function record(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 export class RoomClient {
   private ws: WebSocket | null = null;
@@ -64,53 +46,43 @@ export class RoomClient {
       this.send(this.token ? { type: 'resume', code: this.code, token: this.token } : this.initial);
     };
     ws.onmessage = (event) => {
-      let data: unknown;
+      if (this.closed) return;
+      let data: ReturnType<typeof parseRoomMessage>;
       try {
-        data = JSON.parse(String(event.data));
-      } catch {
+        data = parseRoomMessage(event.data);
+      } catch (error) {
+        if (!(error instanceof ProtocolError)) throw error;
+        this.close(false);
+        this.callbacks.ended(error.message);
         return;
       }
-      if (!record(data) || typeof data.type !== 'string') return;
+      if (data === null) return;
       switch (data.type) {
         case 'joined':
-          if (typeof data.code !== 'string' || typeof data.token !== 'string') return;
           this.code = data.code;
           this.token = data.token;
           this.attempts = 0;
           this.resuming = false;
           this.callbacks.connection('connected');
-          this.callbacks.joined(this.code, Number(data.slot) || 0);
+          this.callbacks.joined(this.code, data.slot);
           break;
         case 'lobby':
-          if (!Array.isArray(data.slots)) return;
-          this.callbacks.lobby(data as unknown as Lobby);
+          this.callbacks.lobby(data);
           break;
         case 'start':
-          if (!record(data.map) || typeof data.round !== 'string') return;
-          this.callbacks.start(data as unknown as StartMessage);
+          this.callbacks.start(data);
           break;
         case 'state':
-          if (
-            !record(data.state) ||
-            !Array.isArray(data.state.players) ||
-            !Array.isArray(data.state.enemies)
-          )
-            return;
-          this.callbacks.state(
-            data.state as unknown as GameState,
-            data.paused === true,
-            data.waiting === true,
-            data.rewardsSaved === true,
-          );
+          this.callbacks.state(data.state, data.paused, data.waiting, data.rewardsSaved);
           break;
         case 'briefing':
           this.callbacks.briefing();
           break;
         case 'pong':
-          this.callbacks.latency(Math.max(0, Date.now() - Number(data.stamp)));
+          this.callbacks.latency(Math.max(0, Date.now() - data.stamp));
           break;
         case 'error': {
-          const message = String(data.message || '房间操作未完成');
+          const message = data.message;
           if (!this.token || this.resuming) {
             this.close(false);
             this.callbacks.ended(message);
@@ -119,7 +91,7 @@ export class RoomClient {
         }
         case 'ended':
           this.close(false);
-          this.callbacks.ended(String(data.message || '小队已解散'));
+          this.callbacks.ended(data.message);
           break;
       }
     };

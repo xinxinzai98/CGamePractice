@@ -1,3 +1,4 @@
+import { ValidationError } from './errors';
 import * as Progression from './progression';
 import * as Equipment from './equipment';
 import type {
@@ -28,40 +29,36 @@ export const DIRS: number[][] = [
 export const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 export function validateMap(value: unknown): GameMap {
   const input = record(value);
-  if (!input || typeof input !== 'object') throw Error('地图内容无效');
   const { width: w, height: h } = input;
-  if (typeof w !== 'number' || typeof h !== 'number') throw Error('地图尺寸无效');
+  if (typeof w !== 'number' || typeof h !== 'number') throw new ValidationError('地图尺寸无效');
+  if (!Number.isInteger(w) || !Number.isInteger(h) || w < 10 || h < 10 || w > 48 || h > 48)
+    throw new ValidationError('地图宽高必须为 10–48 格');
   if (
     !Array.isArray(input.tiles) ||
-    !input.tiles.every((r) => Array.isArray(r) && r.every((t) => typeof t === 'number'))
+    input.tiles.length !== h ||
+    !input.tiles.every(
+      (r) =>
+        Array.isArray(r) &&
+        r.length === w &&
+        r.every((t) => typeof t === 'number' && Number.isInteger(t) && t >= 0 && t <= 5),
+    )
   )
-    throw Error('地图地形数据不完整');
+    throw new ValidationError('地图地形数据不完整');
   const tiles = input.tiles as number[][];
   const parsePoint = (v: unknown): Point => {
     const p = record(v);
-    if (typeof p.x !== 'number' || typeof p.y !== 'number') throw Error('地图坐标无效');
+    if (typeof p.x !== 'number' || typeof p.y !== 'number')
+      throw new ValidationError('地图坐标无效');
     return { x: p.x, y: p.y };
   };
-  if (!Array.isArray(input.spawns) || !Array.isArray(input.enemies)) throw Error('出生数据无效');
+  if (!Array.isArray(input.spawns) || !Array.isArray(input.enemies))
+    throw new ValidationError('出生数据无效');
   const spawns = input.spawns.map(parsePoint),
     enemies: MapEnemy[] = input.enemies.map((v) => {
       const e = record(v);
-      if (typeof e.type !== 'number') throw Error('敌人类型无效');
+      if (typeof e.type !== 'number') throw new ValidationError('敌人类型无效');
       return { ...parsePoint(v), type: e.type, ...(e.boss ? { boss: true } : {}) };
     });
-  if (!Number.isInteger(w) || !Number.isInteger(h) || w < 10 || h < 10 || w > 48 || h > 48)
-    throw Error('地图宽高必须为 10–48 格');
-  if (
-    !Array.isArray(tiles) ||
-    tiles.length !== h ||
-    tiles.some(
-      (r) =>
-        !Array.isArray(r) ||
-        r.length !== w ||
-        r.some((t) => !Number.isInteger(t) || t < 0 || t > 5),
-    )
-  )
-    throw Error('地图地形数据不完整');
   const pass = (x: number, y: number) =>
     Number.isInteger(x) &&
     Number.isInteger(y) &&
@@ -70,21 +67,20 @@ export function validateMap(value: unknown): GameMap {
     x < w &&
     y < h &&
     ![1, 2].includes(tiles[y][x]);
-  if (!Array.isArray(spawns) || spawns.length !== 2 || spawns.some((p) => !p || !pass(p.x, p.y)))
-    throw Error('请在可通行地面放置两个玩家出生点');
+  if (spawns.length !== 2 || spawns.some((p) => !pass(p.x, p.y)))
+    throw new ValidationError('请在可通行地面放置两个玩家出生点');
   if (spawns[0].x === spawns[1].x && spawns[0].y === spawns[1].y)
-    throw Error('两个玩家出生点不能重叠');
+    throw new ValidationError('两个玩家出生点不能重叠');
   if (
-    !Array.isArray(enemies) ||
     enemies.length < 1 ||
     enemies.length > 80 ||
-    enemies.some((e) => !e || !pass(e.x, e.y) || ![1, 2, 3, 4].includes(e.type))
+    enemies.some((e) => !pass(e.x, e.y) || ![1, 2, 3, 4].includes(e.type))
   )
-    throw Error('需要 1–80 个位于可通行地面的敌人');
+    throw new ValidationError('需要 1–80 个位于可通行地面的敌人');
   const occupied = new Set(spawns.map((p) => `${p.x},${p.y}`));
   for (const e of enemies) {
     const k = `${e.x},${e.y}`;
-    if (occupied.has(k)) throw Error('出生点和敌人不能重叠');
+    if (occupied.has(k)) throw new ValidationError('出生点和敌人不能重叠');
     occupied.add(k);
   }
   const seen = new Set([`${spawns[0].x},${spawns[0].y}`]),
@@ -100,33 +96,30 @@ export function validateMap(value: unknown): GameMap {
       }
     }
   if ([...spawns, ...enemies].some((p) => !seen.has(`${p.x},${p.y}`)))
-    throw Error('玩家或敌人被地形隔开了，请用道路或桥连接');
+    throw new ValidationError('玩家或敌人被地形隔开了，请用道路或桥连接');
   const rawCoop = record(input.cooperation);
   const cooperation = input.cooperation
     ? { pads: Array.isArray(rawCoop.pads) ? rawCoop.pads.map(parsePoint) : [] }
     : undefined;
   if (
     cooperation &&
-    (!Array.isArray(cooperation.pads) ||
-      cooperation.pads.length !== 2 ||
-      cooperation.pads.some((p) => !p || !pass(p.x, p.y) || !seen.has(`${p.x},${p.y}`)) ||
+    (cooperation.pads.length !== 2 ||
+      cooperation.pads.some((p) => !pass(p.x, p.y) || !seen.has(`${p.x},${p.y}`)) ||
       Math.hypot(
         cooperation.pads[0].x - cooperation.pads[1].x,
         cooperation.pads[0].y - cooperation.pads[1].y,
       ) < 1)
   )
-    throw Error('同步机关需要两个独立且可到达的站位');
+    throw new ValidationError('同步机关需要两个独立且可到达的站位');
   const rawPuzzle = record(input.puzzle),
     puzzle = input.puzzle
       ? { redPad: parsePoint(rawPuzzle.redPad), bluePad: parsePoint(rawPuzzle.bluePad) }
       : undefined;
   if (
     puzzle &&
-    (!puzzle.redPad ||
-      !puzzle.bluePad ||
-      [puzzle.redPad, puzzle.bluePad].some((p) => !pass(p.x, p.y) || !seen.has(`${p.x},${p.y}`)))
+    [puzzle.redPad, puzzle.bluePad].some((p) => !pass(p.x, p.y) || !seen.has(`${p.x},${p.y}`))
   )
-    throw Error('解谜节点必须可到达');
+    throw new ValidationError('解谜节点必须可到达');
   return {
     version: 1,
     ...(puzzle ? { puzzle: { redPad: { ...puzzle.redPad }, bluePad: { ...puzzle.bluePad } } } : {}),
@@ -269,13 +262,12 @@ export class Game implements GameState {
   enemies: Enemy[];
 
   constructor(
-    map: unknown,
+    map: GameMap,
     {
       coop = false,
       character = 'Asuka',
       seed = 12345,
       difficulty = 'normal',
-      upgrades = {},
       nodes = {},
       characters = [],
       practice = false,
@@ -285,7 +277,7 @@ export class Game implements GameState {
   ) {
     this.practice = !!practice;
     this.practiceOptions = { invincible: true, noCooldown: false };
-    this.map = validateMap(map);
+    this.map = structuredClone(map);
     this.seed = seed >>> 0;
     this.time = 0;
     this.status = 'playing';
@@ -327,38 +319,30 @@ export class Game implements GameState {
         },
       };
     }
-    this.players = this.map.spawns
-      .slice(0, coop ? 2 : 1)
-      .map(
-        (p, i) =>
-          ({
-            id: `p${i}`,
-            x: (p.x + 0.5) * TILE,
-            y: (p.y + 0.5) * TILE,
-            dir: 0,
-            r: 18,
-            hp: 100,
-            maxHp: 100,
-            character: characters[i] || (coop ? (i ? 'Rei' : 'Asuka') : character),
-            team: 1,
-            cd: { fire: 0, heal: 0, speed: 0, special: 0, ultimate: 0, melee: 0, item: 0 },
-            boost: 0,
-            heal: 0,
-            barrage: 0,
-            shield: 0,
-            flash: 0,
-            moving: false,
-            firePose: 0,
-            revive: 0,
-          }) as Player,
-      );
+    this.players = this.map.spawns.slice(0, coop ? 2 : 1).map(
+      (p, i) =>
+        ({
+          id: `p${i}`,
+          x: (p.x + 0.5) * TILE,
+          y: (p.y + 0.5) * TILE,
+          dir: 0,
+          r: 18,
+          hp: 100,
+          maxHp: 100,
+          character: characters[i] || (coop ? (i ? 'Rei' : 'Asuka') : character),
+          team: 1,
+          cd: { fire: 0, heal: 0, speed: 0, special: 0, ultimate: 0, melee: 0, item: 0 },
+          boost: 0,
+          heal: 0,
+          barrage: 0,
+          shield: 0,
+          flash: 0,
+          moving: false,
+          firePose: 0,
+          revive: 0,
+        }) as Player,
+    );
     for (const p of this.players) {
-      const u = upgrades[p.character] || {};
-      p.upgrades = {
-        power: clamp(Number(u.power) || 0, 0, 3),
-        mobility: clamp(Number(u.mobility) || 0, 0, 3),
-        support: clamp(Number(u.support) || 0, 0, 3),
-      };
       const l = loadouts[p.character] || {};
       p.loadout = {
         ammo: l.ammo === 'AP' || l.ammo === 'HE' || l.ammo === 'HESH' ? l.ammo : 'AP',
@@ -373,13 +357,8 @@ export class Game implements GameState {
       p.config = Progression.effectConfig(p.character, p.nodes);
       p.energy = p.maxEnergy = 100;
       p.activeItem = (gear[p.character] || []).includes('sync-relay');
-      p.gearMods = Equipment?.modsFor(gear[p.character] || []) || {
-        damageMult: 1,
-        hpBonus: 0,
-        speedMult: 1,
-        cooldownMult: 1,
-      };
-      p.maxHp = p.hp = 100 + p.upgrades.support * 10 + p.config.extraHp + p.gearMods.hpBonus;
+      p.gearMods = Equipment.modsFor(gear[p.character] || []);
+      p.maxHp = p.hp = 100 + p.config.extraHp + p.gearMods.hpBonus;
       p.stats = {
         shots: 0,
         hits: 0,
@@ -515,7 +494,7 @@ export class Game implements GameState {
               ? 30
               : 20) *
         (a.team
-          ? (1 + (a.upgrades?.power || 0) * 0.2) * (a.gearMods?.damageMult || 1)
+          ? a.gearMods.damageMult
           : this.difficulty === 'relaxed'
             ? 0.5
             : this.difficulty === 'hard'
@@ -608,11 +587,7 @@ export class Game implements GameState {
       })
       .sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y));
     for (const a of spear ? targets.slice(0, 1) : targets) {
-      this.damage(
-        a,
-        (spear ? 52 : 32) * p.gearMods.damageMult * (1 + p.upgrades.power * 0.2),
-        p.id,
-      );
+      this.damage(a, (spear ? 52 : 32) * p.gearMods.damageMult, p.id);
       p.stats.meleeHits++;
       if (spear) a.slowUntil = this.time + 1.2;
     }
@@ -660,16 +635,13 @@ export class Game implements GameState {
           a.hp = 30;
           p.stats.rescues++;
         }
-        const amount = Math.min(
-          a.maxHp - a.hp,
-          (a === p ? 20 : 10) + p.upgrades.support * 5 + c.healBonus,
-        );
+        const amount = Math.min(a.maxHp - a.hp, (a === p ? 20 : 10) + c.healBonus);
         a.hp += amount;
         p.stats.healing += amount;
         if (c.resurrection) a.shield = Math.max(a.shield, 2);
         this.effect(a.x, a.y, 'heal', c.healRadius);
       }
-      p.cd.heal = 20 - p.upgrades.support * 2;
+      p.cd.heal = 20;
       p.heal = 1;
       p.flash = 0.15;
       this.events.push('heal');
@@ -677,7 +649,7 @@ export class Game implements GameState {
     }
     if (name === 'speed') {
       p.boost = 10;
-      p.cd.speed = 15 - p.upgrades.mobility;
+      p.cd.speed = 15;
       if (c.boostShield) {
         p.shield = Math.max(p.shield, 1.5);
         this.effect(p.x, p.y, 'shield', 55);
@@ -690,7 +662,7 @@ export class Game implements GameState {
     }
     if (name === 'special') {
       if (p.character === 'Asuka') {
-        p.barrage = 2 + p.upgrades.power * 0.3;
+        p.barrage = 2;
         p.cd.special = 5;
         p.cd.fire = 0;
         this.effect(p.x, p.y, 'barrage', 70);
@@ -699,7 +671,7 @@ export class Game implements GameState {
         const ox = p.x,
           oy = p.y,
           [dx, dy] = DIRS[p.dir];
-        for (let step = 0; step < 15 + p.upgrades.mobility * 5 + c.teleportExtra / 4; step++) {
+        for (let step = 0; step < 15 + c.teleportExtra / 4; step++) {
           if (!this.free(p.x + dx * 4, p.y + dy * 4, p.r, p)) break;
           p.x += dx * 4;
           p.y += dy * 4;
@@ -728,7 +700,7 @@ export class Game implements GameState {
       if (p.character === 'Asuka') {
         for (const a of this.players)
           if (a === p || (c.sharedShield && a.hp > 0 && Math.hypot(a.x - p.x, a.y - p.y) < 180)) {
-            a.shield = 5 + p.upgrades.support * 0.5 + (c.fortress ? 3 : 0);
+            a.shield = 5 + (c.fortress ? 3 : 0);
             if (c.fortress) {
               const amount = Math.min(a.maxHp - a.hp, 25);
               a.hp += amount;
@@ -739,7 +711,7 @@ export class Game implements GameState {
         p.cd.ultimate = 10;
       } else {
         this.shoot(p, true);
-        p.cd.ultimate = 3 - p.upgrades.power * 0.2;
+        p.cd.ultimate = 3;
         this.effect(p.x, p.y, 'missile', 35);
       }
       this.events.push('skill');
@@ -876,7 +848,6 @@ export class Game implements GameState {
         if (p.heal <= 0 && (p.barrage <= 0 || p.config.mobileBarrage)) {
           const speed =
             (p.boost > 0 ? 160 : p.shield > 0 ? 120 : 80) *
-            (1 + p.upgrades.mobility * 0.08) *
             p.config.speedMultiplier *
             p.gearMods.speedMult;
           this.move(p, DIRS[p.dir][0] * speed * dt, DIRS[p.dir][1] * speed * dt);

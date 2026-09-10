@@ -5,8 +5,9 @@ const fs = require('node:fs'),
 const { DatabaseSync } = require('node:sqlite'),
   { promisify } = require('node:util');
 const scrypt = promisify(crypto.scrypt);
+const { RequestError } = require('./errors.cjs');
 const rules = () => require('../packages/simulation/dist/index.js');
-const blank = () => rules().Progression.normalizeProfile({});
+const blank = () => rules().Progression.createProfile();
 function createProfiles(
   file,
   { legacyFile = path.join(path.dirname(file), 'profiles.json') } = {},
@@ -51,7 +52,11 @@ function createProfiles(
         if (inserted.changes)
           db.prepare('INSERT INTO profiles VALUES (?,?)').run(
             key,
-            JSON.stringify(rules().Progression.normalizeProfile(u.profile)),
+            JSON.stringify(
+              rules().Progression.migrateLegacyProfile(u.profile, (message) =>
+                console.warn('Legacy profile migration:', message),
+              ),
+            ),
           );
       }
       db.prepare('INSERT INTO migrations VALUES (?,?)').run(
@@ -69,7 +74,12 @@ function createProfiles(
       .prepare('SELECT u.*,p.json FROM users u JOIN profiles p ON p.user_key=u.key WHERE u.key=?')
       .get(name.toLowerCase());
     return row
-      ? { username: row.username, salt: row.salt, hash: row.hash, profile: JSON.parse(row.json) }
+      ? {
+          username: row.username,
+          salt: row.salt,
+          hash: row.hash,
+          profile: rules().Progression.parseProfile(JSON.parse(row.json)),
+        }
       : null;
   };
   function mutate(user, fn, eventKey = null, kind = 'update') {
@@ -101,9 +111,9 @@ function createProfiles(
   }
   function credentials(username, password) {
     if (typeof username !== 'string' || !/^[\p{L}\p{N}_-]{3,20}$/u.test(username))
-      throw Error('用户名须为 3–20 位字母、数字、中文、下划线或短横线');
+      throw new RequestError('用户名须为 3–20 位字母、数字、中文、下划线或短横线');
     if (typeof password !== 'string' || password.length < 8 || password.length > 72)
-      throw Error('密码须为 8–72 位');
+      throw new RequestError('密码须为 8–72 位');
     return username.toLowerCase();
   }
   const tokenOf = (req) =>
@@ -147,7 +157,7 @@ function createProfiles(
     },
     async register(username, password, res) {
       const key = credentials(username, password);
-      if (byName(key) || pending.has(key)) throw Error('用户名已存在');
+      if (byName(key) || pending.has(key)) throw new RequestError('用户名已存在');
       pending.add(key);
       try {
         const salt = crypto.randomBytes(16).toString('hex'),
@@ -168,7 +178,7 @@ function createProfiles(
         user = byName(key);
       const hash = await scrypt(password, user?.salt || '00000000000000000000000000000000', 64);
       if (!user || !crypto.timingSafeEqual(hash, Buffer.from(user.hash, 'hex')))
-        throw Error('用户名或密码错误');
+        throw new RequestError('用户名或密码错误');
       loginCookie(user, res);
       return user;
     },
@@ -180,7 +190,7 @@ function createProfiles(
       return mutate(
         user,
         (p) => {
-          if (p.tickets < 1) throw Error('补给券不足，请完成教学或联网通关');
+          if (p.tickets < 1) throw new RequestError('补给券不足，请完成教学或联网通关');
           const pityTriggered = p.pity >= 9,
             rare = pityTriggered || crypto.randomInt(100) < 25,
             rarity = rare ? 'rare' : 'standard';
@@ -205,33 +215,33 @@ function createProfiles(
     },
     award(username, character, game, room) {
       const user = byName(username);
-      if (!user) return;
+      if (!user) throw Error('Reward account does not exist');
+      const player = game.players.find((p) => p.character === character);
+      if (!player) throw Error('Reward character is absent from the round');
+      if (!Number.isInteger(room.stage) || room.stage < 0 || room.stage > 2)
+        throw Error('Reward stage is invalid');
       return mutate(
         user,
         (p) => {
           const won = game.status === 'won',
-            player = game.players.find((p) => p.character === character),
             xp = won ? 100 + room.mission * 50 : 0;
           p.characters[character].xp = Math.min(300000, p.characters[character].xp + xp);
           if (won) {
-            p.unlocked = Math.max(
-              p.unlocked,
-              Math.min(12, room.mission * 3 + (room.stage || 0) + 2),
-            );
+            p.unlocked = Math.max(p.unlocked, Math.min(12, room.mission * 3 + room.stage + 2));
             p.tickets++;
-            p.coins += 60 + (room.mission * 3 + (room.stage || 0)) * 15;
+            p.coins += 60 + (room.mission * 3 + room.stage) * 15;
           }
           p.records.history.unshift({
             round: room.round,
             at: new Date().toISOString(),
             character,
             mission: room.mission,
-            stage: room.stage || 0,
+            stage: room.stage,
             won,
             xp,
             score: game.score,
             time: game.time,
-            stats: player?.stats || {},
+            stats: player.stats,
           });
           p.records.history = p.records.history.slice(0, 50);
           p.records[won ? 'wins' : 'losses']++;

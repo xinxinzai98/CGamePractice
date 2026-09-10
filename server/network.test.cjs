@@ -8,7 +8,12 @@ async function setup(t, options = {}) {
   const dir = require('node:fs').mkdtempSync(
     require('node:path').join(require('node:os').tmpdir(), 'dawn-network-'),
   );
+  require('node:fs').writeFileSync(
+    require('node:path').join(dir, 'index.html'),
+    '<title>Test client</title>',
+  );
   const app = createServer({
+    webRoot: dir,
     profilesFile: require('node:path').join(dir, 'profiles.sqlite'),
     ...options,
   });
@@ -425,4 +430,41 @@ test('failed reward retries after one second, preserves successful slot and save
   }
   await a.wait('state');
   assert.deepEqual(calls, { retry_one: 1, retry_two: 2 });
+});
+test('guest legacy upgrades cannot increase health or shot damage', async (t) => {
+  const { app, a, b, seat } = await room(t);
+  const start = a.wait('start');
+  a.send({ type: 'ready', ready: true, upgrades: { power: 3, mobility: 3, support: 3 } });
+  b.send({ type: 'ready', ready: true });
+  await start;
+  const g = app.rooms.get(seat.code).game;
+  assert.equal(g.players[0].maxHp, 100);
+  g.shoot(g.players[0]);
+  assert.equal(g.bullets.at(-1).damage, 20);
+});
+test('missing default client build returns 503 without falling back to web but APIs remain available', async (t) => {
+  const fs = require('node:fs'),
+    original = fs.existsSync;
+  t.mock.method(fs, 'existsSync', (p) =>
+    String(p).endsWith('/client/dist/index.html') ? false : original(p),
+  );
+  const app = await setup(t, { webRoot: undefined });
+  const base = `http://127.0.0.1:${app.port}`;
+  const page = await fetch(base + '/');
+  assert.equal(page.status, 503);
+  assert.match(await page.text(), /客户端尚未构建/);
+  assert.equal((await fetch(base + '/api/me')).status, 200);
+});
+test('missing reward account does not mark round saved', async (t) => {
+  const { app, a, b, seat } = await room(t);
+  await ready(a, b);
+  const r = app.rooms.get(seat.code);
+  r.slots[0].username = 'missing_account';
+  const error = a.wait('error'),
+    state = a.wait('state', (m) => m.state.status === 'won');
+  r.game.enemies.forEach((e) => r.game.damage(e, 1000, 'p0'));
+  await error;
+  assert.equal((await state).rewardsSaved, false);
+  assert.equal(r.rewardSlots[0], false);
+  assert.equal(r.awarded, false);
 });

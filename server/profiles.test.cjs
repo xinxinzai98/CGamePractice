@@ -249,7 +249,14 @@ test('ordinary duplicate converts to forty coins and increments pity with capped
       tickets: 1,
       pity: 2,
       inventory: all,
-      drawHistory: Array.from({ length: 30 }, () => ({ itemId: 'pulse-coil' })),
+      drawHistory: Array.from({ length: 30 }, () => ({
+        itemId: 'pulse-coil',
+        rarity: 'standard',
+        duplicate: false,
+        coins: 0,
+        pityTriggered: false,
+        at: '2026-09-10T00:00:00.000Z',
+      })),
     }),
     r = await a.request('/api/login', { username: 'shop_pilot', password: 'password123' }),
     cookie = r.headers.get('set-cookie');
@@ -275,4 +282,44 @@ test('concurrent purchase requests debit once and reject the duplicate', async (
   const { profile } = await (await a.request('/api/me', undefined, cookie)).json();
   assert.equal(profile.coins, 910);
   assert.deepEqual(profile.inventory, ['pulse-coil']);
+});
+test('SQLite write failures return generic 500 and preserve balance; business rejection stays 400', async (t) => {
+  const a = await setup(t, 1000),
+    login = await a.request('/api/login', { username: 'shop_pilot', password: 'password123' }),
+    cookie = login.headers.get('set-cookie');
+  assert.equal((await a.request('/api/shop', { itemId: 'missing' }, cookie)).status, 400);
+  const db = new (require('node:sqlite').DatabaseSync)(a.file);
+  try {
+    db.exec(
+      "CREATE TRIGGER reject_http_write BEFORE UPDATE ON profiles BEGIN SELECT RAISE(ABORT,'internal disk failure secret'); END;",
+    );
+    const r = await a.request('/api/shop', { itemId: 'pulse-coil' }, cookie);
+    assert.equal(r.status, 500);
+    assert(!JSON.stringify(await r.json()).includes('internal disk failure secret'));
+    const { profile } = await (await a.request('/api/me', undefined, cookie)).json();
+    assert.equal(profile.coins, 1000);
+    assert.deepEqual(profile.inventory, []);
+  } finally {
+    db.close();
+  }
+});
+test('corrupt stored profile returns 500 instead of silently replacing player progress', async (t) => {
+  const a = await setup(t, 1000),
+    login = await a.request('/api/login', { username: 'shop_pilot', password: 'password123' }),
+    cookie = login.headers.get('set-cookie');
+  const db = new (require('node:sqlite').DatabaseSync)(a.file);
+  try {
+    db.prepare('UPDATE profiles SET json=? WHERE user_key=?').run(
+      JSON.stringify({ coins: 'broken' }),
+      'shop_pilot',
+    );
+    const r = await a.request('/api/me', undefined, cookie);
+    assert.equal(r.status, 500);
+    assert.deepEqual(
+      JSON.parse(db.prepare('SELECT json FROM profiles WHERE user_key=?').get('shop_pilot').json),
+      { coins: 'broken' },
+    );
+  } finally {
+    db.close();
+  }
 });

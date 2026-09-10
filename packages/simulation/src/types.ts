@@ -85,7 +85,6 @@ export interface Actor extends Point {
   stats?: Stats;
   config?: EffectConfig;
   gearMods?: GearMods;
-  upgrades?: { power: number; mobility: number; support: number };
   armorBreakUntil?: number;
   exposedUntil?: number;
   slowUntil?: number;
@@ -104,7 +103,6 @@ export interface Player extends Actor {
   nodes: string[];
   config: EffectConfig;
   stats: Stats;
-  upgrades: { power: number; mobility: number; support: number };
   gearMods: GearMods;
   loadout: Loadout;
   energy: number;
@@ -190,7 +188,6 @@ export interface GameOptions {
   character?: Character;
   seed?: number;
   difficulty?: 'relaxed' | 'normal' | 'hard';
-  upgrades?: Partial<Record<Character, Partial<Player['upgrades']>>>;
   nodes?: string[] | Partial<Record<Character, string[]>>;
   characters?: Character[];
   practice?: boolean;
@@ -201,9 +198,9 @@ export interface Profile {
   characters: Record<Character, { xp: number; nodes: string[] }>;
   tickets: number;
   pity: number;
-  drawHistory: unknown[];
+  drawHistory: DrawRecord[];
   unlocked: number;
-  records: { history: unknown[]; wins: number; losses: number };
+  records: { history: BattleRecord[]; wins: number; losses: number };
   coins: number;
   inventory: string[];
   equipment: Record<Character, Record<Slot, string | null>>;
@@ -226,4 +223,27 @@ export function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+export interface BattleRecord {
+  round: string;
+  at: string;
+  character: Character;
+  mission: number;
+  stage: number;
+  won: boolean;
+  xp: number;
+  score: number;
+  time: number;
+  stats: Stats;
+}
+export interface DrawReward {
+  itemId: string;
+  rarity: 'standard' | 'rare';
+  duplicate: boolean;
+  coins: number;
+  pityTriggered: boolean;
+}
+export interface DrawRecord extends DrawReward {
+  at: string;
 }

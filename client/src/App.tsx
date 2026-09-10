@@ -9,7 +9,16 @@ import {
   type Loadout,
 } from '@dawn/simulation';
 import { createGame, type GameRuntime } from './game';
-import { request, listRooms, type ApiResponse, type User, type PublicRoom } from './services/api';
+import {
+  request,
+  listRooms,
+  type ApiResponse,
+  type ApiAction,
+  type ApiResults,
+  type RequestBody,
+  type User,
+  type PublicRoom,
+} from './services/api';
 import { RoomClient, type Lobby, type StartMessage } from './services/room-client';
 import { AudioService } from './services/audio';
 import { AuthModal } from './ui/AuthModal';
@@ -32,7 +41,7 @@ type View =
   | 'gallery';
 const names: Record<Character, string> = { Asuka: '明日香', Rei: '绫波丽' };
 const missionNames = ['旧日清晨', '河岸防线', '纵深行动', '黎明之战'];
-const emptyProfile = () => Progression.normalizeProfile({});
+const emptyProfile = Progression.createProfile;
 export function App() {
   const host = useRef<HTMLDivElement>(null),
     runtime = useRef<GameRuntime | null>(null),
@@ -64,6 +73,8 @@ export function App() {
     [waiting, setWaiting] = useState(false),
     [latency, setLatency] = useState(0),
     [connection, setConnection] = useState('');
+  const [roomsError, setRoomsError] = useState<string | null>(null);
+  const [roomsLoaded, setRoomsLoaded] = useState(false);
   const [publicRooms, setPublicRooms] = useState<PublicRoom[]>([]),
     [mission, setMission] = useState(0),
     [stage, setStage] = useState(0),
@@ -90,7 +101,7 @@ export function App() {
     setProfile(result.profile);
   }, []);
   const callApi = useCallback(
-    async (action: string, body: Record<string, unknown>) => {
+    async <A extends ApiAction>(action: A, body?: RequestBody): Promise<ApiResults[A]> => {
       const result = await request(action, body);
       apply(result);
       return result;
@@ -189,9 +200,18 @@ export function App() {
     const update = () =>
       void listRooms()
         .then((rooms) => {
-          if (active) setPublicRooms(rooms);
+          if (active) {
+            setPublicRooms(rooms);
+            setRoomsLoaded(true);
+            setRoomsError(null);
+          }
         })
-        .catch(() => {});
+        .catch((error: unknown) => {
+          if (active) {
+            setRoomsLoaded(true);
+            setRoomsError(error instanceof Error ? error.message : '小队列表读取失败');
+          }
+        });
     update();
     const t = setInterval(update, 6000);
     return () => {
@@ -537,18 +557,27 @@ export function App() {
                   </button>
                 </div>
                 <div className="public-rooms">
-                  {publicRooms.length ? (
-                    publicRooms.slice(0, 3).map((r) => (
-                      <button key={r.code} onClick={() => connect({ type: 'join', code: r.code })}>
-                        <span>
-                          {r.code} · {r.mission + 1}-{r.stage + 1}
-                        </span>
-                        <small>{r.playersCount}/2 加入 →</small>
-                      </button>
-                    ))
-                  ) : (
-                    <p>当前没有等待中的小队</p>
+                  {roomsError && (
+                    <p className="rooms-error" role="status">
+                      小队列表暂不可用：{roomsError}。{publicRooms.length > 0 && '以下为上次结果。'}
+                    </p>
                   )}
+                  {publicRooms.length
+                    ? publicRooms.slice(0, 3).map((r) => (
+                        <button
+                          key={r.code}
+                          disabled={roomsError !== null}
+                          onClick={() => connect({ type: 'join', code: r.code })}
+                        >
+                          <span>
+                            {r.code} · {r.mission + 1}-{r.stage + 1}
+                          </span>
+                          <small>{r.playersCount}/2 加入 →</small>
+                        </button>
+                      ))
+                    : !roomsError && (
+                        <p>{roomsLoaded ? '当前没有等待中的小队' : '正在查找小队…'}</p>
+                      )}
                 </div>
               </div>
               <div className="glass-panel pilot-summary">

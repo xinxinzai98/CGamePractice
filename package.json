@@ -11,7 +11,7 @@
     "dev": "vite --config client/vite.config.ts",
     "dev:server": "node server/server.cjs",
     "start": "node server/server.cjs",
-    "test": "npm run build:shared && node --test web/tests/*.test.cjs packages/simulation/tests/*.test.cjs server/*.test.cjs",
+    "test": "npm run build:shared && node --experimental-strip-types --test web/tests/*.test.cjs packages/simulation/tests/*.test.cjs server/*.test.cjs client/tests/*.test.cjs",
     "check": "npm run typecheck && node --check server/server.cjs && node --check server/profiles.cjs"
   },
   "dependencies": {

@@ -1,3 +1,4 @@
+import { ValidationError } from './errors';
 import type { GearMods, Slot } from './types';
 export interface EquipmentItem {
   id: string;
@@ -65,12 +66,13 @@ export const ITEMS: EquipmentItem[] = [
     mods: { cooldownMult: 0.88 },
   },
 ];
-export function modsFor(ids: unknown = []): GearMods {
+export function modsFor(ids: string[] = []): GearMods {
   const mods: GearMods = { damageMult: 1, hpBonus: 0, speedMult: 1, cooldownMult: 1 },
     slots = new Set();
-  for (const id of new Set(Array.isArray(ids) ? ids : [])) {
+  for (const id of new Set(ids)) {
     const item = ITEMS.find((i) => i.id === id);
-    if (!item || slots.has(item.slot)) continue;
+    if (!item) throw new ValidationError(`未知装备：${id}`);
+    if (slots.has(item.slot)) continue;
     slots.add(item.slot);
     for (const [key, val] of Object.entries(item.mods))
       if (key === 'hpBonus') mods[key as keyof GearMods] += val;

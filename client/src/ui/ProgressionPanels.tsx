@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Equipment, Progression, type Profile, type Character, type Slot } from '@dawn/simulation';
 import { SkillIcon, type IconKind } from './SkillIcon';
 import './progression-panels.css';
+import type { ApiClient, ApiAction, ApiResults, RequestBody, Reward } from '../services/api';
 
 interface Props {
   view: 'skills' | 'shop' | 'supply' | 'records';
@@ -10,7 +11,7 @@ interface Props {
   username: string | null;
   character: Character;
   onCharacter: (character: Character) => void;
-  onApi: (action: string, body: Record<string, unknown>) => Promise<unknown>;
+  onApi: ApiClient;
   onToast: (message: string) => void;
   onLogin: () => void;
   onTrial: (character: Character, nodes: string[]) => void;
@@ -18,14 +19,7 @@ interface Props {
 const names: Record<Character, string> = { Asuka: '明日香', Rei: '绫波丽' };
 const slotNames: Record<Slot, string> = { weapon: '主武器', armor: '防护装甲', module: '辅助模组' };
 const slots: Slot[] = ['weapon', 'armor', 'module'];
-function object(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-function numeric(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
+const itemById = Object.fromEntries(Equipment.ITEMS.map((item) => [item.id, item]));
 function icon(value: string): IconKind {
   return [
     'fire',
@@ -57,7 +51,7 @@ function ProgressionPanelContent(props: Props) {
   const [drafts, setDrafts] = useState<Partial<Record<Character, string[]>>>({});
   const [trials, setTrials] = useState<Record<Character, string[]>>({ Asuka: [], Rei: [] });
   const [selected, setSelected] = useState<string | null>(null);
-  const [reward, setReward] = useState<Record<string, unknown> | null>(null);
+  const [reward, setReward] = useState<Reward | null>(null);
   const [rewardSerial, setRewardSerial] = useState(0);
   const draft = trial
     ? trials[character]
@@ -79,7 +73,11 @@ function ProgressionPanelContent(props: Props) {
       return errorText(error);
     }
   }
-  async function act(action: string, body: Record<string, unknown>, success: string) {
+  async function act<A extends ApiAction>(
+    action: A,
+    body: RequestBody,
+    success: string,
+  ): Promise<ApiResults[A] | undefined> {
     if (!username) {
       onLogin();
       return;
@@ -355,7 +353,7 @@ function ProgressionPanelContent(props: Props) {
               onClick={async () => {
                 const result = await act('draw', {}, '补给已到达。');
                 if (result !== undefined) {
-                  setReward(object(object(result).reward));
+                  setReward(result.reward);
                   setRewardSerial((value) => value + 1);
                 }
               }}
@@ -371,12 +369,7 @@ function ProgressionPanelContent(props: Props) {
                   key={rewardSerial}
                   className={`pp-reward ${reward.rarity === 'rare' ? 'is-rare' : ''}`}
                 >
-                  <SkillIcon
-                    kind={icon(
-                      Equipment.ITEMS.find((item) => item.id === reward.itemId)?.icon || 'item',
-                    )}
-                    size={70}
-                  />
+                  <SkillIcon kind={icon(itemById[reward.itemId].icon)} size={70} />
                   <small>
                     {reward.pityTriggered
                       ? '保底支援已抵达'
@@ -384,12 +377,10 @@ function ProgressionPanelContent(props: Props) {
                         ? '稀有信号'
                         : '支援已抵达'}
                   </small>
-                  <h2>
-                    {Equipment.ITEMS.find((item) => item.id === reward.itemId)?.name || '战备配件'}
-                  </h2>
+                  <h2>{itemById[reward.itemId].name}</h2>
                   <p>
                     {reward.duplicate
-                      ? `重复配件已转换为 ${numeric(reward.coins)} 金币`
+                      ? `重复配件已转换为 ${reward.coins} 金币`
                       : '已加入仓库，可在机体配件中装配。'}
                   </p>
                 </div>
@@ -412,11 +403,10 @@ function ProgressionPanelContent(props: Props) {
             </div>
             <div className="pp-draw-history">
               <h3>最近接收</h3>
-              {profile.drawHistory.slice(0, 5).map((entry, index) => {
-                const row = object(entry);
+              {profile.drawHistory.slice(0, 5).map((row, index) => {
                 return (
                   <p key={index}>
-                    {Equipment.ITEMS.find((item) => item.id === row.itemId)?.name || '配件'}
+                    {itemById[row.itemId].name}
                     {row.duplicate ? ' · 重复转金币' : ''}
                   </p>
                 );
@@ -460,28 +450,21 @@ function ProgressionPanelContent(props: Props) {
                 </tr>
               </thead>
               <tbody>
-                {profile.records.history.slice(0, 50).map((entry, index) => {
-                  const row = object(entry),
-                    stats = object(row.stats);
+                {profile.records.history.slice(0, 50).map((row) => {
+                  const stats = row.stats;
                   return (
-                    <tr key={index}>
+                    <tr key={`${row.round}:${row.character}`}>
                       <td>
-                        {numeric(row.mission) + 1}-{numeric(row.stage) + 1}
+                        {row.mission + 1}-{row.stage + 1}
                       </td>
-                      <td>
-                        {row.character === 'Asuka'
-                          ? names.Asuka
-                          : row.character === 'Rei'
-                            ? names.Rei
-                            : '未知驾驶员'}
-                      </td>
+                      <td>{names[row.character]}</td>
                       <td className={row.won ? 'pp-win' : 'pp-loss'}>
                         {row.won ? '任务完成' : '任务失利'}
                       </td>
-                      <td>+{numeric(row.xp)}</td>
-                      <td>{Math.round(numeric(stats.damage))}</td>
-                      <td>{Math.round(numeric(stats.healing))}</td>
-                      <td>{numeric(stats.rescues)}</td>
+                      <td>+{row.xp}</td>
+                      <td>{Math.round(stats.damage)}</td>
+                      <td>{Math.round(stats.healing)}</td>
+                      <td>{stats.rescues}</td>
                     </tr>
                   );
                 })}
