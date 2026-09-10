@@ -1,4 +1,6 @@
 import type { GameState, GameMap, InputState, Loadout } from '@dawn/simulation';
+import type { AssetPack } from './asset-manifest';
+export type { AssetPack } from './asset-manifest';
 export type Pilot = 'Asuka' | 'Rei';
 export type GameView = 'cover' | 'lobby' | 'briefing' | 'battle' | 'practice';
 export interface PracticeOptions {
@@ -12,12 +14,14 @@ export interface PracticeOptions {
 export interface GameCallbacks {
   onReady?(): void;
   onPauseRequest?(): void;
-  onProgress?(value: number): void;
+  onProgress?(value: number, pack?: AssetPack): void;
+  onEvents?(events: string[]): void;
   onSnapshot?(snapshot: GameState): void;
   onInput?(input: InputState): void;
   onError?(message: string): void;
 }
 export interface GameRuntime {
+  prepareAssets(pack: AssetPack): Promise<void>;
   setView(view: GameView): void;
   setPilot(pilot: Pilot): void;
   setReducedMotion(value: boolean): void;

@@ -7,6 +7,9 @@ web/output/
 client/dist/
 packages/simulation/dist/
 .vite/
+output/playwright/
+.playwright-cli/
+.playwright/
 
 client/src/**/*.js
 packages/simulation/src/**/*.js

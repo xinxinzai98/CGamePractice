@@ -12,7 +12,7 @@ import { createGame, type GameRuntime } from './game';
 import {
   request,
   listRooms,
-  type ApiResponse,
+  getActiveRoom,
   type ApiAction,
   type ApiResults,
   type RequestBody,
@@ -22,6 +22,9 @@ import {
 import { RoomClient, type Lobby, type StartMessage } from './services/room-client';
 import { AudioService } from './services/audio';
 import { AuthModal } from './ui/AuthModal';
+import { PasswordForm } from './ui/PasswordForm';
+import { SessionController } from './services/session-controller';
+import { SaveTask, type SaveStatus } from './services/save-task';
 import { PilotDisplay } from './ui/PilotDisplay';
 import { BattleHud } from './ui/BattleHud';
 import { SkillIcon } from './ui/SkillIcon';
@@ -55,7 +58,26 @@ export function App() {
     [settingsOpen, setSettingsOpen] = useState(false);
   const actionInput = useRef<InputState>({});
   const [rewardsSaved, setRewardsSaved] = useState(false);
-  const rewardRefresh = useRef('');
+  const [tutorialSync, setTutorialSync] = useState<{ status: SaveStatus; error: string }>({
+    status: 'idle',
+    error: '',
+  });
+  const [rewardSync, setRewardSync] = useState<{ status: SaveStatus; error: string }>({
+    status: 'idle',
+    error: '',
+  });
+  const tutorialSave = useRef(new SaveTask((status, error) => setTutorialSync({ status, error })));
+  const rewardSave = useRef(new SaveTask((status, error) => setRewardSync({ status, error })));
+  const [requestCount, setRequestCount] = useState(0);
+  const [, setPendingVersion] = useState(0);
+  const [retryingOperation, setRetryingOperation] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const loadingAction = useRef<() => void>(() => {});
+  const transition = useRef(0);
+  const battleResourcesReady = useRef(false);
+  const networkSnapshot = useRef<GameState | null>(null);
+  const lobbyPilot = useRef<Character | null>(null);
+  const lobbyMission = useRef('');
   const [assetsReady, setAssetsReady] = useState(false),
     [progress, setProgress] = useState(0),
     [scale, setScale] = useState(1),
@@ -85,46 +107,55 @@ export function App() {
     [tutorial, setTutorial] = useState(false),
     [weapon, setWeapon] = useState<Loadout>({ ammo: 'AP', melee: 'blade' });
   const [volume, setVolume] = useState(0.022);
-  const afterLoading = useRef<View>('lobby'),
-    toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined),
-    lastResult = useRef(''),
-    tutorialSaved = useRef(false);
-  const latest = useRef({ view, user, profile, slot, current, paused, waiting });
-  latest.current = { view, user, profile, slot, current, paused, waiting };
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined),
+    lastResult = useRef('');
+  const latest = useRef({ view, user, profile, slot, current, paused, waiting, lobby });
+  latest.current = { view, user, profile, slot, current, paused, waiting, lobby };
   const toast = useCallback((text: string) => {
     setMessage(text);
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setMessage(''), 4200);
   }, []);
-  const apply = useCallback((result: ApiResponse) => {
-    setUser(result.user);
-    setProfile(result.profile);
-  }, []);
+  const sessions = useRef<SessionController | null>(null);
+  if (!sessions.current)
+    sessions.current = new SessionController(
+      request,
+      (result) => {
+        latest.current.user = result.user;
+        latest.current.profile = result.profile;
+        setUser(result.user);
+        setProfile(result.profile);
+      },
+      sessionStorage,
+      () => setPendingVersion((value) => value + 1),
+    );
   const callApi = useCallback(
     async <A extends ApiAction>(action: A, body?: RequestBody): Promise<ApiResults[A]> => {
-      const result = await request(action, body);
-      apply(result);
-      return result;
+      setRequestCount((count) => count + 1);
+      try {
+        return await sessions.current!.run(action, body);
+      } finally {
+        setRequestCount((count) => count - 1);
+      }
     },
-    [apply],
+    [],
   );
-  const refresh = useCallback(async () => {
-    try {
-      apply(await request('me'));
-    } catch (e) {
-      toast(e instanceof Error ? e.message : '存档服务未连接');
-    }
-  }, [apply, toast]);
+  const refresh = useCallback(() => sessions.current!.run('me'), []);
+  const syncProfile = useCallback(async () => {
+    const result = await refresh();
+    if (!result.user) throw new Error('档案登录已失效，请重新登录后同步。');
+    return result;
+  }, [refresh]);
   useEffect(() => {
     const resize = () => setScale(Math.min(innerWidth / 1600, innerHeight / 900));
     resize();
     window.addEventListener('resize', resize);
-    void refresh();
+    void refresh().catch((e) => toast(e instanceof Error ? e.message : '存档服务未连接'));
     return () => {
       window.removeEventListener('resize', resize);
       clearTimeout(toastTimer.current);
     };
-  }, [refresh]);
+  }, [refresh, toast]);
   const togglePause = useCallback(() => {
     const state = latest.current;
     if (state.view === 'battle') room.current?.send({ type: 'pause', paused: !state.paused });
@@ -152,6 +183,7 @@ export function App() {
           actionInput.current = {};
         }
       },
+      onEvents: (events) => events.forEach((kind) => audio.current.play(kind)),
       onPauseRequest: togglePause,
       onError: toast,
     });
@@ -186,32 +218,26 @@ export function App() {
     audio.current.volume = volume;
   }, [muted, volume]);
   useEffect(() => {
-    if (view === 'loading' && assetsReady) {
-      const t = setTimeout(() => {
-        if (afterLoading.current === 'practice') practice(true);
-        else setView(afterLoading.current);
-      }, 350);
-      return () => clearTimeout(t);
-    }
-  }, [view, assetsReady]);
-  useEffect(() => {
     if (view !== 'lobby') return;
     let active = true;
-    const update = () =>
+    let serial = 0;
+    const update = () => {
+      const requestId = ++serial;
       void listRooms()
         .then((rooms) => {
-          if (active) {
+          if (active && requestId === serial) {
             setPublicRooms(rooms);
             setRoomsLoaded(true);
             setRoomsError(null);
           }
         })
         .catch((error: unknown) => {
-          if (active) {
+          if (active && requestId === serial) {
             setRoomsLoaded(true);
             setRoomsError(error instanceof Error ? error.message : '小队列表读取失败');
           }
         });
+    };
     update();
     const t = setInterval(update, 6000);
     return () => {
@@ -221,10 +247,6 @@ export function App() {
   }, [view]);
   useEffect(() => {
     if (!snapshot) return;
-    snapshot.events.slice(0, 3).forEach((kind) => {
-      if (kind === 'noenergy') return;
-      audio.current.play(kind);
-    });
     if (
       view === 'battle' &&
       (snapshot.status === 'won' || snapshot.status === 'lost') &&
@@ -234,11 +256,10 @@ export function App() {
       lastResult.current = current.round;
       audio.current.play(snapshot.status === 'won' ? 'win' : 'boom');
     }
-    if (view === 'battle' && rewardsSaved && current && rewardRefresh.current !== current.round) {
-      rewardRefresh.current = current.round;
-      void refresh();
+    if (view === 'battle' && rewardsSaved && current && rewardSave.current.status === 'idle') {
+      void rewardSave.current.run(syncProfile);
     }
-    if (view === 'practice' && tutorial && !tutorialSaved.current) {
+    if (view === 'practice' && tutorial && tutorialSave.current.status === 'idle') {
       const stats = snapshot.players[0]?.stats;
       if (
         stats &&
@@ -250,18 +271,57 @@ export function App() {
         stats.melee &&
         stats.heals
       ) {
-        tutorialSaved.current = true;
-        if (user)
-          void callApi('tutorial', { complete: true })
-            .then(() => toast('首次同步完成，补给券已存入档案。'))
-            .catch((e) => toast(String(e)));
+        if (user) void saveTutorial();
       }
     }
-  }, [snapshot, view, current, tutorial, user, callApi, toast, refresh, rewardsSaved]);
-  const loadInto = (next: View) => {
-    afterLoading.current = next;
-    setView('loading');
+  }, [snapshot, view, current, tutorial, user, callApi, toast, syncProfile, rewardsSaved]);
+  async function saveTutorial() {
+    if (await tutorialSave.current.run(() => callApi('tutorial', { complete: true })))
+      toast('同步训练已保存，补给奖励已写入档案。');
+  }
+  function transitionTo(next: View, prepare: () => Promise<void>, complete?: () => void) {
+    const run = () => {
+      const ticket = ++transition.current;
+      setLoadError('');
+      setProgress(0);
+      setView('loading');
+      void prepare()
+        .then(() => {
+          if (ticket !== transition.current) return;
+          setProgress(1);
+          setView(next);
+          complete?.();
+        })
+        .catch((error) => {
+          if (ticket === transition.current)
+            setLoadError(error instanceof Error ? error.message : '资源加载失败');
+        });
+    };
+    loadingAction.current = run;
+    run();
     void audio.current.enable();
+  }
+  const loadInto = (next: View) => {
+    if (next === 'practice') {
+      practice(true);
+      return;
+    }
+    const identity = sessions.current!.identityEpoch;
+    transitionTo(
+      next,
+      async () => {
+        await runtime.current!.prepareAssets('hangar');
+      },
+      () => {
+        if (next === 'lobby' && latest.current.user)
+          void getActiveRoom()
+            .then((saved) => {
+              if (saved && identity === sessions.current!.identityEpoch && !room.current)
+                connect({ type: 'resume', ...saved });
+            })
+            .catch((error) => toast(error instanceof Error ? error.message : '席位恢复失败'));
+      },
+    );
   };
   const enter = () => {
     if (view !== 'cover') return;
@@ -277,6 +337,8 @@ export function App() {
     setView(next);
   };
   const leaveRoom = () => {
+    transition.current++;
+    actionInput.current = {};
     room.current?.close();
     room.current = null;
     setLobby(null);
@@ -288,7 +350,7 @@ export function App() {
     setView('lobby');
   };
   function connect(initial: Record<string, unknown>) {
-    if (!user) {
+    if (!latest.current.user) {
       setAuthOpen(true);
       return;
     }
@@ -297,6 +359,8 @@ export function App() {
       return;
     }
     setConnection('connecting');
+    lobbyPilot.current = null;
+    lobbyMission.current = '';
     const transport = new RoomClient(initial, {
       joined: (code, index) => {
         setRoomCode(code);
@@ -305,39 +369,70 @@ export function App() {
         setView('briefing');
       },
       lobby: (data) => {
+        latest.current.lobby = data;
         setLobby(data);
-        setMission(data.mission);
-        setStage(data.stage);
-        setDifficulty(data.difficulty);
+        const missionKey = `${data.mission}:${data.stage}:${data.difficulty}`;
+        if (lobbyMission.current !== missionKey) {
+          lobbyMission.current = missionKey;
+          setMission(data.mission);
+          setStage(data.stage);
+          setDifficulty(data.difficulty);
+        }
         const c = data.slots[latest.current.slot]?.character;
         if (c) {
           setCharacter(c);
-          setWeapon(latest.current.profile.loadouts[c]);
+          if (lobbyPilot.current !== c) {
+            lobbyPilot.current = c;
+            setWeapon(latest.current.profile.loadouts[c]);
+          }
         }
       },
       start: (data) => {
+        actionInput.current = {};
         setRewardsSaved(false);
+        rewardSave.current.reset();
+        battleResourcesReady.current = false;
+        networkSnapshot.current = null;
         setCurrent(data);
         latest.current.current = data;
         setPaused(false);
         setWaiting(false);
         setTutorial(false);
         setSnapshot(null);
-        setView('battle');
-        void audio.current.enable();
+        transitionTo(
+          'battle',
+          () =>
+            runtime.current!.prepareAssets(
+              data.map.artSet === 'new' ? 'battle-new' : 'battle-legacy',
+            ),
+          () => {
+            battleResourcesReady.current = true;
+            if (networkSnapshot.current)
+              runtime.current!.applyNetworkState(
+                networkSnapshot.current,
+                data.map,
+                latest.current.slot,
+                data.round,
+              );
+          },
+        );
       },
       state: (state, pause, wait, saved) => {
         setRewardsSaved(saved);
         const session = latest.current.current;
         if (!session) return;
         const full = { ...state, map: session.map, practice: false };
-        runtime.current?.applyNetworkState(full, session.map, latest.current.slot, session.round);
+        networkSnapshot.current = full;
+        if (battleResourcesReady.current)
+          runtime.current?.applyNetworkState(full, session.map, latest.current.slot, session.round);
         setSnapshot(full);
         setPaused(pause);
         setWaiting(wait);
       },
+      events: (events) => events.forEach((kind) => audio.current.play(kind)),
       error: toast,
       ended: (text) => {
+        transition.current++;
         room.current = null;
         setLobby(null);
         setCurrent(null);
@@ -364,29 +459,54 @@ export function App() {
     room.current = transport;
   }
   function practice(withTutorial: boolean) {
-    if (!assetsReady) {
-      toast('资源仍在载入，请稍候。');
-      return;
-    }
     if (room.current) {
       toast('请先离开作战小队。');
       return;
     }
-    setTutorial(withTutorial);
-    tutorialSaved.current = false;
-    setPaused(false);
-    setCurrent(null);
-    setSnapshot(null);
-    runtime.current?.startPractice({
-      character,
-      nodes: trialBuilds[character] ?? profile.characters[character].nodes,
-      gear: Object.values(profile.equipment[character]).filter((id): id is string => !!id),
-      loadout: profile.loadouts[character],
-      noCooldown,
-      tutorial: withTutorial,
-    });
-    setView('practice');
-    void audio.current.enable();
+    transitionTo(
+      'practice',
+      () => runtime.current!.prepareAssets(withTutorial ? 'battle-legacy' : 'battle-new'),
+      () => {
+        setTutorial(withTutorial);
+        tutorialSave.current.reset(latest.current.profile.tutorialComplete);
+        setPaused(false);
+        setCurrent(null);
+        setSnapshot(null);
+        const stored = latest.current.profile;
+        runtime.current!.startPractice({
+          character,
+          nodes: trialBuilds[character] ?? stored.characters[character].nodes,
+          gear: Object.values(stored.equipment[character]).filter((id): id is string => !!id),
+          loadout: stored.loadouts[character],
+          noCooldown,
+          tutorial: withTutorial,
+        });
+      },
+    );
+  }
+  async function toggleReady() {
+    if (!lobby) return;
+    const transport = room.current;
+    const missionKey = `${lobby.mission}:${lobby.stage}:${lobby.difficulty}`;
+    if (lobby.slots[slot]?.ready) {
+      room.current?.send({ type: 'ready', ready: false });
+      return;
+    }
+    setRequestCount((count) => count + 1);
+    try {
+      await runtime.current!.prepareAssets(
+        lobby.mission === 0 && lobby.stage < 2 ? 'battle-legacy' : 'battle-new',
+      );
+      if (transport !== room.current || missionKey !== lobbyMission.current) {
+        toast('小队任务已变化，请核对配置后重新准备。');
+        return;
+      }
+      transport?.send({ type: 'ready', ready: true });
+    } catch (error) {
+      toast(error instanceof Error ? error.message : '作战素材加载失败，请重试准备。');
+    } finally {
+      setRequestCount((count) => count - 1);
+    }
   }
   const activePilot = lobby?.slots[slot]?.character ?? character;
   const atBattle = view === 'battle' || view === 'practice';
@@ -408,6 +528,7 @@ export function App() {
       toast(e instanceof Error ? e.message : '保存失败');
     }
   }
+  const pendingState = sessions.current.pendingState();
   return (
     <div
       className={
@@ -447,7 +568,7 @@ export function App() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  setView('gallery');
+                  loadInto('gallery');
                 }}
               >
                 制作档案
@@ -459,7 +580,24 @@ export function App() {
         {view === 'loading' && (
           <section className="loading-screen">
             <span className="eyebrow">SYNCHRONIZATION</span>
-            <h1>同步链路建立中</h1>
+            <h1>{loadError ? '同步暂未完成' : '同步链路建立中'}</h1>
+            {loadError && (
+              <>
+                <p role="alert">{loadError}</p>
+                <button className="primary" onClick={() => loadingAction.current()}>
+                  重试加载
+                </button>
+                <button
+                  onClick={() => {
+                    transition.current++;
+                    if (room.current) leaveRoom();
+                    else setView(user ? 'lobby' : 'cover');
+                  }}
+                >
+                  返回
+                </button>
+              </>
+            )}
             <div className="loading-track">
               <i style={{ width: `${Math.round(progress * 100)}%` }} />
             </div>
@@ -680,10 +818,13 @@ export function App() {
                     aria-label="战役"
                     disabled={slot !== 0}
                     value={mission}
-                    onChange={(e) => setMission(Number(e.target.value))}
+                    onChange={(e) => {
+                      setMission(Number(e.target.value));
+                      setStage(0);
+                    }}
                   >
                     {missionNames.map((name, i) => (
-                      <option key={name} value={i}>
+                      <option key={name} value={i} disabled={i * 3 + 1 > lobby.unlocked}>
                         第 {i + 1} 战役 · {name}
                       </option>
                     ))}
@@ -698,7 +839,7 @@ export function App() {
                     onChange={(e) => setStage(Number(e.target.value))}
                   >
                     {[0, 1, 2].map((i) => (
-                      <option key={i} value={i}>
+                      <option key={i} value={i} disabled={mission * 3 + i + 1 > lobby.unlocked}>
                         {mission + 1}-{i + 1} · {i === 2 ? '使徒核心' : '战术行动'}
                       </option>
                     ))}
@@ -717,7 +858,7 @@ export function App() {
                   </select>
                 </label>
                 <button
-                  disabled={slot !== 0}
+                  disabled={slot !== 0 || mission * 3 + stage + 1 > lobby.unlocked}
                   onClick={() =>
                     room.current?.send({ type: 'configure', mission, stage, difficulty })
                   }
@@ -730,7 +871,10 @@ export function App() {
                     : '留意敌方预警与双方支援。'}
                   变更任务后需要重新准备。
                 </p>
-                <small>分享房间码，让另一位驾驶员加入。</small>
+                <small>
+                  房主已解锁至 {Math.floor((lobby.unlocked - 1) / 3) + 1}-
+                  {((lobby.unlocked - 1) % 3) + 1}，可带领低进度队友作战。
+                </small>
               </div>
               <div className="panel loadout-panel">
                 <span className="eyebrow">02 / PILOT & LOADOUT</span>
@@ -782,6 +926,7 @@ export function App() {
                   远程弹种
                   <select
                     value={weapon.ammo}
+                    disabled={requestCount > 0}
                     onChange={(e) =>
                       setWeapon({ ...weapon, ammo: e.target.value as Loadout['ammo'] })
                     }
@@ -795,6 +940,7 @@ export function App() {
                   近战武器
                   <select
                     value={weapon.melee}
+                    disabled={requestCount > 0}
                     onChange={(e) =>
                       setWeapon({ ...weapon, melee: e.target.value as Loadout['melee'] })
                     }
@@ -803,7 +949,9 @@ export function App() {
                     <option value="spear">相位长矛</option>
                   </select>
                 </label>
-                <button onClick={() => void saveWeapon()}>保存武器配置</button>
+                <button disabled={requestCount > 0} onClick={() => void saveWeapon()}>
+                  保存武器配置
+                </button>
                 <p className="muted">装扮扩展位 · 个人展示可在档案中切换</p>
               </div>
               <div className="panel squad-panel">
@@ -837,9 +985,8 @@ export function App() {
                 </div>
                 <button
                   className="primary"
-                  onClick={() =>
-                    room.current?.send({ type: 'ready', ready: !lobby.slots[slot]?.ready })
-                  }
+                  disabled={requestCount > 0}
+                  onClick={() => void toggleReady()}
                 >
                   {lobby.slots[slot]?.ready ? '取消准备' : '我已准备'}
                 </button>
@@ -922,9 +1069,12 @@ export function App() {
             onReset={() => {
               if (tutorial) practice(true);
               else runtime.current?.resetPractice();
-              tutorialSaved.current = false;
+              tutorialSave.current.reset(profile.tutorialComplete);
             }}
             tutorial={tutorial}
+            tutorialSync={tutorialSync}
+            signedIn={!!user}
+            onRetryTutorial={() => void saveTutorial()}
           />
         )}
         {atBattle && paused && snapshot?.status !== 'won' && snapshot?.status !== 'lost' && (
@@ -942,7 +1092,7 @@ export function App() {
                 onClick={() =>
                   view === 'battle'
                     ? leaveRoom()
-                    : (runtime.current?.pausePractice(true), setView('lobby'), setSnapshot(null))
+                    : (runtime.current?.pausePractice(true), loadInto('lobby'), setSnapshot(null))
                 }
               >
                 离开作战
@@ -958,10 +1108,23 @@ export function App() {
               <p>
                 {!rewardsSaved
                   ? '正在保存作战档案…'
-                  : snapshot.status === 'won'
-                    ? '熟练度、金币与补给券已写入驾驶员档案。'
-                    : '本次记录已保存。调整配装，再次出击。'}
+                  : rewardSync.status === 'failed'
+                    ? `服务器已结算，档案读取失败：${rewardSync.error}`
+                    : rewardSync.status !== 'saved'
+                      ? '服务器已结算，正在同步个人档案…'
+                      : snapshot.status === 'won'
+                        ? '熟练度、金币与补给券已写入驾驶员档案。'
+                        : '本次记录已保存。调整配装，再次出击。'}
               </p>
+              {rewardSync.status === 'failed' && (
+                <button
+                  onClick={() =>
+                    user ? void rewardSave.current.run(syncProfile) : setAuthOpen(true)
+                  }
+                >
+                  {user ? '重新同步档案' : '重新登录档案'}
+                </button>
+              )}
               <table>
                 <thead>
                   <tr>
@@ -990,7 +1153,7 @@ export function App() {
                 <>
                   <button
                     className="primary"
-                    disabled={!rewardsSaved}
+                    disabled={!rewardsSaved || rewardSync.status !== 'saved'}
                     onClick={() => room.current?.send({ type: 'prepare' })}
                   >
                     返回战前准备
@@ -998,14 +1161,14 @@ export function App() {
                   {snapshot.status === 'won' &&
                     !(current?.mission === 3 && current?.stage === 2) && (
                       <button
-                        disabled={!rewardsSaved}
+                        disabled={!rewardsSaved || rewardSync.status !== 'saved'}
                         onClick={() => room.current?.send({ type: 'next' })}
                       >
                         下一小关 →
                       </button>
                     )}
                   <button
-                    disabled={!rewardsSaved}
+                    disabled={!rewardsSaved || rewardSync.status !== 'saved'}
                     onClick={() => room.current?.send({ type: 'retry' })}
                   >
                     重新挑战
@@ -1019,8 +1182,8 @@ export function App() {
         )}
         {authOpen && (
           <AuthModal
-            onSuccess={(result) => {
-              apply(result);
+            onApi={callApi}
+            onSuccess={() => {
               setAuthOpen(false);
               if (view === 'cover') loadInto('lobby');
               toast('驾驶员档案已连接。');
@@ -1048,7 +1211,6 @@ export function App() {
                   onChange={(e) => {
                     void callApi('appearance', {
                       pilot: e.target.value,
-                      reducedMotion: profile.appearance.reducedMotion,
                     }).catch((e) => toast(String(e)));
                   }}
                 >
@@ -1062,23 +1224,31 @@ export function App() {
                   checked={profile.appearance.reducedMotion}
                   onChange={(e) =>
                     void callApi('appearance', {
-                      pilot: profile.appearance.pilot,
                       reducedMotion: e.target.checked,
                     }).catch((e) => toast(String(e)))
                   }
                 />{' '}
                 减少角色动态
               </label>
+              <PasswordForm
+                onApi={callApi}
+                onSuccess={() => {
+                  leaveRoom();
+                  toast('密码已更新，其他设备的旧登录已失效。');
+                }}
+              />
               <button
                 onClick={() => {
                   if (room.current) {
                     toast('请先离开小队。');
                     return;
                   }
-                  void callApi('logout', {}).then(() => {
-                    setProfileOpen(false);
-                    setView('cover');
-                  });
+                  void callApi('logout', {})
+                    .then(() => {
+                      setProfileOpen(false);
+                      setView('cover');
+                    })
+                    .catch((error) => toast(error instanceof Error ? error.message : '退出失败'));
                 }}
               >
                 退出档案
@@ -1123,9 +1293,41 @@ export function App() {
             </div>
           </div>
         )}
-        {message && (
+        {(message ||
+          pendingState.error ||
+          (!['cover', 'loading', 'battle', 'practice'].includes(view) &&
+            pendingState.records.length > 0 &&
+            requestCount === 0)) && (
           <div className="toast" role="status">
-            {message}
+            {message && <p>{message}</p>}
+            {pendingState.error ? (
+              <p>{pendingState.error}</p>
+            ) : (
+              pendingState.records.length > 0 &&
+              requestCount === 0 &&
+              !['cover', 'loading', 'battle', 'practice'].includes(view) && (
+                <>
+                  <p>有补给或金币操作等待核实。重试会查询同一笔交易。</p>
+                  <button
+                    disabled={retryingOperation}
+                    onClick={async () => {
+                      setRetryingOperation(true);
+                      try {
+                        const pending = sessions.current!.pending()[0];
+                        if (pending) await callApi(pending.action, pending.body);
+                        toast('交易结果已核实，个人档案已同步。');
+                      } catch (error) {
+                        toast(error instanceof Error ? error.message : '交易核实失败');
+                      } finally {
+                        setRetryingOperation(false);
+                      }
+                    }}
+                  >
+                    {retryingOperation ? '正在核实…' : '重试核实'}
+                  </button>
+                </>
+              )
+            )}
           </div>
         )}
       </div>

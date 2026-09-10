@@ -10,23 +10,33 @@ const { RequestError } = require('./errors.cjs');
 const CLIENT = path.resolve(__dirname, '../client/dist');
 const send = (ws, data) => {
   if (ws?.readyState === WebSocket.OPEN && ws.bufferedAmount < 262144)
-    ws.send(JSON.stringify(data));
+    return (ws.send(JSON.stringify(data)), true);
+  return false;
 };
 function createServer({
   reconnectMs = 30000,
   maxRooms = 30,
+  secureCookies = process.env.DAWN_SECURE_COOKIES === '1',
+  trustedProxies = (process.env.DAWN_TRUST_PROXY || '')
+    .split(',')
+    .map((ip) => ip.trim())
+    .filter(Boolean),
   profilesFactory = createProfiles,
-  profilesFile = path.resolve(__dirname, '../data/profiles.sqlite'),
+  profilesFile = process.env.DAWN_PROFILES_FILE ||
+    path.resolve(__dirname, '../data/profiles.sqlite'),
   webRoot = process.env.DAWN_CLIENT_DIR || CLIENT,
 } = {}) {
   const WEB = path.resolve(webRoot);
+  const pendingResults = new Map();
   const rooms = new Map(),
-    profiles = profilesFactory(profilesFile),
+    profiles = profilesFactory(profilesFile, { secureCookies }),
     attempts = new Map();
   const equipment = () => D.Equipment;
   const progression = () => D.Progression;
   const publicUser = (u) =>
-    u ? { user: { username: u.username }, profile: u.profile } : { user: null };
+    u
+      ? { user: { username: u.username, revision: u.revision }, profile: u.profile }
+      : { user: null };
   const json = (res, status, body) => {
     res.writeHead(status, {
       'Content-Type': 'application/json',
@@ -55,6 +65,14 @@ function createServer({
                 playersCount: r.slots.filter((s) => s?.ws).length,
               })),
           });
+        if (req.url === '/api/room' && req.method === 'GET') {
+          const user = profiles.get(req);
+          if (!user) return json(res, 401, { error: '请先登录' });
+          const seat = accountSeat(user.username);
+          return json(res, 200, {
+            room: seat ? { code: seat.room.code, token: seat.slot.token } : null,
+          });
+        }
         if (req.url === '/api/me' && req.method === 'GET')
           return json(res, 200, publicUser(profiles.get(req)));
         if (req.method !== 'POST') return json(res, 405, { error: '请求方法不支持' });
@@ -75,7 +93,14 @@ function createServer({
           return json(res, 400, { error: 'JSON 格式无效' });
         }
         if (req.url === '/api/register' || req.url === '/api/login') {
-          const key = req.socket.remoteAddress,
+          const peer = req.socket.remoteAddress;
+          const forwarded = String(req.headers['x-forwarded-for'] || '')
+            .split(',')
+            .at(-1)
+            .trim();
+          const address =
+            trustedProxies.includes(peer) && require('node:net').isIP(forwarded) ? forwarded : peer;
+          const key = `${address}:${String(body.username).toLowerCase()}`,
             now = Date.now();
           if (attempts.size > 1000)
             for (const [k, v] of attempts) if (now - v.at > 60000) attempts.delete(k);
@@ -84,7 +109,13 @@ function createServer({
             a = { at: now, n: 0 };
             attempts.set(key, a);
           }
-          if (++a.n > 15) return json(res, 429, { error: '尝试过于频繁，请稍后重试' });
+          let source = attempts.get(`ip:${address}`);
+          if (!source || now - source.at > 60000) {
+            source = { at: now, n: 0 };
+            attempts.set(`ip:${address}`, source);
+          }
+          if (++a.n > 15 || ++source.n > 120)
+            return json(res, 429, { error: '尝试过于频繁，请稍后重试' });
           return json(
             res,
             200,
@@ -99,10 +130,16 @@ function createServer({
         }
         if (req.url === '/api/logout') {
           profiles.logout(req, res);
+          revokeInvalidConnections();
           return json(res, 200, { user: null });
         }
         const user = profiles.get(req);
         if (!user) return json(res, 401, { error: '请先登录' });
+        if (req.url === '/api/password') {
+          await profiles.changePassword(user, body.currentPassword, body.newPassword, res);
+          revokeInvalidConnections();
+          return json(res, 200, publicUser(user));
+        }
         if (req.url === '/api/build') {
           profiles.mutate(user, (p) => {
             if (!['Asuka', 'Rei'].includes(body.character)) throw new RequestError('角色无效');
@@ -112,17 +149,11 @@ function createServer({
               p.characters[body.character].xp,
             );
           });
+          invalidateReady(user.username);
           return json(res, 200, publicUser(user));
         }
         if (req.url === '/api/shop') {
-          profiles.mutate(user, (p) => {
-            const item = equipment().ITEMS.find((i) => i.id === body.itemId);
-            if (!item) throw new RequestError('装备不存在');
-            if (p.inventory.includes(item.id)) throw new RequestError('已经拥有此装备');
-            if (p.coins < item.price) throw new RequestError('金币不足');
-            p.coins -= item.price;
-            p.inventory.push(item.id);
-          });
+          profiles.purchase(user, body.itemId, body.operationId);
           return json(res, 200, publicUser(user));
         }
         if (req.url === '/api/equip') {
@@ -138,6 +169,7 @@ function createServer({
               p.equipment[body.character][body.slot] = item.id;
             }
           });
+          invalidateReady(user.username);
           return json(res, 200, publicUser(user));
         }
         if (req.url === '/api/loadout') {
@@ -150,28 +182,31 @@ function createServer({
               throw new RequestError('角色、弹种或近战武器无效');
             p.loadouts[body.character] = { ammo: body.ammo, melee: body.melee };
           });
+          invalidateReady(user.username);
           return json(res, 200, publicUser(user));
         }
         if (req.url === '/api/appearance') {
           profiles.mutate(user, (p) => {
-            if (!['Asuka', 'Rei'].includes(body.pilot) || typeof body.reducedMotion !== 'boolean')
+            const hasPilot = Object.hasOwn(body, 'pilot'),
+              hasMotion = Object.hasOwn(body, 'reducedMotion');
+            if (
+              (!hasPilot && !hasMotion) ||
+              (hasPilot && !['Asuka', 'Rei'].includes(body.pilot)) ||
+              (hasMotion && typeof body.reducedMotion !== 'boolean')
+            )
               throw new RequestError('看板角色或动态偏好无效');
-            p.appearance = { pilot: body.pilot, reducedMotion: body.reducedMotion };
+            if (hasPilot) p.appearance.pilot = body.pilot;
+            if (hasMotion) p.appearance.reducedMotion = body.reducedMotion;
           });
           return json(res, 200, publicUser(user));
         }
         if (req.url === '/api/draw') {
-          const reward = profiles.draw(user);
+          const reward = profiles.draw(user, body.operationId);
           return json(res, 200, { ...publicUser(user), reward });
         }
         if (req.url === '/api/tutorial') {
           if (body.complete !== true) throw new RequestError('教学状态无效');
-          profiles.mutate(user, (p) => {
-            if (!p.tutorialComplete) {
-              p.tutorialComplete = true;
-              p.tickets += 3;
-            }
-          });
+          profiles.completeTutorial(user, body.operationId);
           return json(res, 200, publicUser(user));
         }
         return json(res, 404, { error: '接口不存在' });
@@ -185,6 +220,17 @@ function createServer({
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405);
       res.end();
+      return;
+    }
+    if (req.url === '/ready') {
+      const build = fs.existsSync(path.join(WEB, 'index.html'));
+      let storage = true;
+      try {
+        profiles.health();
+      } catch {
+        storage = false;
+      }
+      json(res, build && storage ? 200 : 503, { ok: build && storage, build, storage });
       return;
     }
     if (req.url === '/health') {
@@ -259,8 +305,62 @@ function createServer({
       socket.destroy();
       return;
     }
+    if (!profiles.get(req)) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
+  function accountSeat(username) {
+    for (const room of rooms.values())
+      for (const slot of room.slots)
+        if (slot && slot.username.toLowerCase() === username.toLowerCase()) return { room, slot };
+    return null;
+  }
+  function invalidateReady(username) {
+    const seat = accountSeat(username);
+    if (!seat || seat.room.game) return;
+    seat.slot.ready = false;
+    lobby(seat.room);
+  }
+  function revokeInvalidConnections() {
+    for (const ws of wss.clients) {
+      if (profiles.sessionValid(ws.request)) continue;
+      if (ws.room) destroy(ws.room, '登录已失效，请重新登录。');
+      else {
+        send(ws, { type: 'ended', message: '登录已失效，请重新登录。' });
+        ws.close(4003, 'Session expired');
+      }
+    }
+  }
+  function loadBuild(slot) {
+    const user = profiles.byName(slot.username);
+    if (!user) throw Error('Room account does not exist');
+    const character = slot.character;
+    slot.nodes = progression().validateBuild(
+      character,
+      user.profile.characters[character].nodes,
+      user.profile.characters[character].xp,
+    );
+    slot.loadout = { ...user.profile.loadouts[character] };
+    slot.gear = Object.values(user.profile.equipment[character]).filter(Boolean);
+  }
+  function resetInput(slot) {
+    slot.input = {};
+    slot.commands = [];
+    slot.commandAck = slot.commandSeq;
+    if (slot.ws && slot.ws.room?.round)
+      send(slot.ws, { type: 'input-ack', round: slot.ws.room.round, seq: slot.commandAck });
+  }
+  function flushEvents(room) {
+    for (const slot of room.slots) {
+      if (!slot?.ws) continue;
+      const events = room.events.filter((event) => event.seq > slot.eventCursor);
+      if (events.length && send(slot.ws, { type: 'events', round: room.round, events }))
+        slot.eventCursor = events.at(-1).seq;
+    }
+  }
   function broadcast(room, data) {
     for (const s of room.slots) send(s?.ws, data);
   }
@@ -271,6 +371,7 @@ function createServer({
       mission: room.mission,
       stage: room.stage,
       difficulty: room.difficulty,
+      unlocked: profiles.byName(room.slots[0].username).profile.unlocked,
       custom: room.custom,
       map: room.map.name,
       slots: room.slots.map((s) =>
@@ -302,7 +403,7 @@ function createServer({
         enemies: g.enemies,
         bullets: g.bullets,
         effects: g.effects,
-        events: g.events,
+        events: [],
         cooperation: g.cooperation,
         difficulty: g.difficulty,
         coop: true,
@@ -310,26 +411,31 @@ function createServer({
     };
   }
   function start(room) {
-    const builds = Object.fromEntries(room.slots.map((s) => [s.character, s.nodes || []]));
+    room.slots.forEach(loadBuild);
+    for (const slot of room.slots) {
+      slot.input = {};
+      slot.commands = [];
+      slot.commandAck = 0;
+      slot.commandSeq = 0;
+      slot.eventCursor = 0;
+    }
+    room.events = [];
+    room.eventSeq = 0;
+    const builds = Object.fromEntries(room.slots.map((s) => [s.character, s.nodes]));
     room.game = new D.Game(room.map, {
       coop: true,
       nodes: builds,
-      loadouts: Object.fromEntries(
-        room.slots.map((s) => [
-          s.character,
-          s.loadout || { ammo: 'AP', melee: s.character === 'Asuka' ? 'blade' : 'spear' },
-        ]),
-      ),
-      gear: Object.fromEntries(room.slots.map((s) => [s.character, s.gear || []])),
+      loadouts: Object.fromEntries(room.slots.map((s) => [s.character, s.loadout])),
+      gear: Object.fromEntries(room.slots.map((s) => [s.character, s.gear])),
       characters: room.slots.map((s) => s.character),
       difficulty: room.difficulty,
       seed: crypto.randomBytes(4).readUInt32LE(),
     });
     room.paused = false;
     room.awarded = false;
-    room.rewardSlots = [false, false];
+    room.rewardRecorded = false;
     room.rewardRetryAt = 0;
-    room.rewardErrors = new Set();
+    room.rewardError = false;
     room.round = crypto.randomBytes(8).toString('hex');
     broadcast(room, {
       type: 'start',
@@ -343,7 +449,33 @@ function createServer({
     });
     broadcast(room, snapshot(room));
   }
+  function roundResult(room) {
+    return {
+      round: room.round,
+      mission: room.mission,
+      stage: room.stage,
+      status: room.game.status,
+      score: room.game.score,
+      time: room.game.time,
+      participants: room.slots.map((slot) => ({
+        username: slot.username,
+        character: slot.character,
+        stats: { ...room.game.players.find((player) => player.character === slot.character).stats },
+      })),
+    };
+  }
+  function retainResult(room) {
+    if (
+      !room.custom &&
+      room.game &&
+      ['won', 'lost'].includes(room.game.status) &&
+      !room.rewardRecorded &&
+      !pendingResults.has(room.round)
+    )
+      pendingResults.set(room.round, roundResult(room));
+  }
   function destroy(room, reason) {
+    retainResult(room);
     broadcast(room, { type: 'ended', message: reason });
     for (const s of room.slots)
       if (s?.ws) {
@@ -354,11 +486,18 @@ function createServer({
   }
   function attach(ws, room, slot) {
     const s = room.slots[slot];
+    if (s.ws && s.ws !== ws) {
+      const previous = s.ws;
+      previous.room = null;
+      send(previous, { type: 'ended', message: '房间已在另一页面恢复。' });
+      previous.close(4001, 'Seat replaced');
+    }
     s.ws = ws;
+    s.eventCursor = room.eventSeq;
     s.disconnectedAt = 0;
     ws.room = room;
     ws.slot = slot;
-    send(ws, { type: 'joined', code: room.code, slot, token: s.token });
+    send(ws, { type: 'joined', code: room.code, slot, token: s.token, commandSeq: s.commandSeq });
     lobby(room);
     if (room.game) {
       send(ws, {
@@ -384,12 +523,17 @@ function createServer({
       ready: false,
       token: crypto.randomBytes(24).toString('hex'),
       input: {},
+      commands: [],
+      commandSeq: 0,
+      commandAck: 0,
+      eventCursor: 0,
       lastInput: 0,
       disconnectedAt: 0,
     };
   }
   wss.on('connection', (ws, req) => {
-    ws.username = profiles.get(req)?.username || null;
+    ws.username = profiles.get(req).username;
+    ws.request = req;
     ws.alive = true;
     ws.window = Date.now();
     ws.messages = 0;
@@ -397,6 +541,11 @@ function createServer({
     ws.on('pong', () => (ws.alive = true));
     ws.on('error', () => {});
     ws.on('message', (raw) => {
+      if (!profiles.sessionValid(req)) {
+        revokeInvalidConnections();
+        return;
+      }
+      if (ws.room && ws.room.slots[ws.slot].ws !== ws) return;
       const now = Date.now();
       if (now - ws.window > 1000) {
         ws.messages = 0;
@@ -421,7 +570,8 @@ function createServer({
           return;
         }
         if (m.type === 'create') {
-          if (room) throw new RequestError('你已经在房间中');
+          if (room || accountSeat(ws.username))
+            throw new RequestError('账号已经在房间中，请恢复原房间或先退出');
           if (rooms.size >= maxRooms) throw new RequestError('当前房间已满，请稍后再试');
           let code;
           do {
@@ -442,13 +592,16 @@ function createServer({
             created: now,
             round: null,
             paused: false,
+            events: [],
+            eventSeq: 0,
           };
           rooms.set(code, room);
           attach(ws, room, 0);
           return;
         }
         if (m.type === 'join') {
-          if (room) throw new RequestError('你已经在房间中');
+          if (room || accountSeat(ws.username))
+            throw new RequestError('账号已经在房间中，请恢复原房间或先退出');
           const code = String(m.code || '').toUpperCase();
           room = rooms.get(code);
           if (!room) throw new RequestError('房间不存在或已关闭');
@@ -462,7 +615,7 @@ function createServer({
           room = rooms.get(String(m.code || ''));
           if (!room) throw new RequestError('房间已结束，请重新创建');
           const slot = room.slots.findIndex((s) => s && s.token === m.token);
-          if (slot < 0 || room.slots[slot].ws || room.slots[slot].username !== ws.username)
+          if (slot < 0 || room.slots[slot].username !== ws.username)
             throw new RequestError('无法恢复此座位');
           attach(ws, room, slot);
           return;
@@ -484,6 +637,8 @@ function createServer({
             !['relaxed', 'normal', 'hard'].includes(difficulty)
           )
             throw new RequestError('关卡配置无效');
+          if (mission * 3 + stage + 1 > profiles.byName(s.username).profile.unlocked)
+            throw new RequestError('房主尚未解锁此关卡');
           room.mission = mission;
           room.stage = stage;
           room.difficulty = difficulty;
@@ -507,36 +662,58 @@ function createServer({
           lobby(room);
         } else if (m.type === 'ready') {
           if (room.game) throw new RequestError('战斗已经开始');
-          s.ready = !!m.ready;
-          const user = profiles.byName(s.username);
-          s.nodes = user
-            ? progression().validateBuild(
-                s.character,
-                user.profile.characters[s.character].nodes,
-                user.profile.characters[s.character].xp,
-              )
-            : [];
-          s.loadout = user
-            ? { ...user.profile.loadouts[s.character] }
-            : { ammo: 'AP', melee: s.character === 'Asuka' ? 'blade' : 'spear' };
-          s.gear = user
-            ? Object.values(user.profile.equipment[s.character] || {}).filter(Boolean)
-            : [];
+          if (typeof m.ready !== 'boolean') throw new RequestError('准备状态无效');
+          loadBuild(s);
+          s.ready = m.ready;
           lobby(room);
           if (room.slots.every((s) => s?.ws && s.ready)) start(room);
         } else if (m.type === 'input') {
-          const input = m.input || {};
-          s.input = {
-            dir: Number.isInteger(input.dir) && input.dir >= 0 && input.dir <= 3 ? input.dir : -1,
-          };
-          for (const k of ['fire', 'heal', 'speed', 'special', 'ultimate', 'melee', 'item'])
-            s.input[k] = input[k] === true;
-          if (['AP', 'HE', 'HESH'].includes(input.ammo)) s.input.ammo = input.ammo;
+          if (!room.game || m.round !== room.round) return;
+          const input = m.input;
+          if (
+            !input ||
+            typeof input !== 'object' ||
+            !Number.isInteger(input.dir) ||
+            input.dir < -1 ||
+            input.dir > 3 ||
+            typeof input.fire !== 'boolean' ||
+            !Array.isArray(m.commands) ||
+            m.commands.length > 64
+          )
+            throw new RequestError('输入格式无效');
+          const accepted = [];
+          let nextSeq = s.commandSeq;
+          for (const command of m.commands) {
+            if (
+              !command ||
+              !Number.isSafeInteger(command.seq) ||
+              command.seq < 1 ||
+              !['fire', 'heal', 'speed', 'special', 'ultimate', 'melee', 'item', 'ammo'].includes(
+                command.key,
+              ) ||
+              (command.key === 'ammo' && !['AP', 'HE', 'HESH'].includes(command.value))
+            )
+              throw new RequestError('技能命令无效');
+            if (command.seq <= nextSeq) continue;
+            if (command.seq !== nextSeq + 1) throw new RequestError('技能命令序号不连续');
+            accepted.push(command);
+            nextSeq = command.seq;
+          }
+          if (s.commands.length + accepted.length > 128)
+            throw new RequestError('待执行技能命令过多');
+          s.commandSeq = nextSeq;
           s.lastInput = now;
+          if (room.paused || room.game.status !== 'playing') {
+            resetInput(s);
+          } else {
+            s.input = { dir: input.dir, fire: input.fire };
+            s.commands.push(...accepted);
+          }
+          send(ws, { type: 'input-ack', round: room.round, seq: s.commandAck });
         } else if (m.type === 'pause') {
           if (room.game?.status === 'playing' && room.slots.every((s) => s?.ws)) {
             room.paused = !!m.paused;
-            room.slots.forEach((s) => (s.input = {}));
+            room.slots.forEach(resetInput);
             broadcast(room, snapshot(room));
           }
         } else if (m.type === 'prepare') {
@@ -550,7 +727,7 @@ function createServer({
           for (const slot of room.slots)
             if (slot) {
               slot.ready = false;
-              slot.input = {};
+              resetInput(slot);
             }
           broadcast(room, { type: 'briefing' });
           lobby(room);
@@ -574,10 +751,20 @@ function createServer({
             }
             room.map = D.campaign(room.mission, room.stage);
           }
+          if (
+            !room.custom &&
+            room.mission * 3 + room.stage + 1 > profiles.byName(s.username).profile.unlocked
+          )
+            throw new RequestError('房主尚未解锁此关卡');
           start(room);
         } else if (m.type === 'leave') destroy(room, '队友已离开房间。');
       } catch (e) {
-        send(ws, { type: 'error', message: e.message });
+        if (e instanceof RequestError || e instanceof D.ValidationError)
+          send(ws, { type: 'error', message: e.message });
+        else {
+          console.error('Room message failed:', e);
+          send(ws, { type: 'error', message: '服务器暂时无法完成房间操作' });
+        }
       }
     });
     ws.on('close', () => {
@@ -588,7 +775,7 @@ function createServer({
       s.ws = null;
       s.input = {};
       s.disconnectedAt = Date.now();
-      if (room.game && room.game.status === 'playing') room.paused = 'disconnect';
+      if (room.game && room.game.status === 'playing' && !room.paused) room.paused = 'disconnect';
       lobby(room);
       if (room.game) broadcast(room, snapshot(room));
     });
@@ -596,6 +783,7 @@ function createServer({
   let ticks = 0;
   const loop = setInterval(() => {
     const now = Date.now();
+    revokeInvalidConnections();
     for (const room of rooms.values()) {
       if (room.slots.some((s) => s?.disconnectedAt && now - s.disconnectedAt > reconnectMs)) {
         destroy(room, '重连等待已超时，房间关闭。');
@@ -606,42 +794,72 @@ function createServer({
         continue;
       }
       if (room.game) {
-        if (!room.paused && room.game.status === 'playing')
+        if (!room.paused && room.game.status === 'playing') {
           room.game.step(
             1 / 30,
-            room.slots.map((s) => (now - s.lastInput < 300 ? s.input : {})),
+            room.slots.map((slot) => {
+              const input = now - slot.lastInput < 300 ? { ...slot.input } : {};
+              const command = slot.commands.shift();
+              if (command) {
+                input[command.key] = command.key === 'ammo' ? command.value : true;
+                slot.commandAck = command.seq;
+              }
+              return input;
+            }),
           );
+          for (const name of room.game.events) room.events.push({ seq: ++room.eventSeq, name });
+          room.events = room.events.slice(-256);
+          for (const slot of room.slots)
+            send(slot.ws, { type: 'input-ack', round: room.round, seq: slot.commandAck });
+        }
         if (
           !room.awarded &&
           ['won', 'lost'].includes(room.game.status) &&
           now >= room.rewardRetryAt
         ) {
-          for (let index = 0; index < room.slots.length; index++) {
-            if (room.rewardSlots[index]) continue;
-            const s = room.slots[index];
-            if (!s.username || room.custom) {
-              room.rewardSlots[index] = true;
-              continue;
-            }
-            try {
-              profiles.award(s.username, s.character, room.game, room);
-              room.rewardSlots[index] = true;
-            } catch (e) {
-              if (!room.rewardErrors.has(index)) {
-                room.rewardErrors.add(index);
-                send(s.ws, { type: 'error', message: '战绩暂未保存，服务器正在重试' });
-                console.error('Profile save failed:', e.message);
+          try {
+            if (!room.custom) {
+              if (!room.rewardRecorded) {
+                retainResult(room);
+                profiles.recordRound(pendingResults.get(room.round) || roundResult(room));
+                pendingResults.delete(room.round);
+                room.rewardRecorded = true;
               }
+              profiles.settleRound(room.round);
+            }
+            room.awarded = true;
+          } catch (error) {
+            if (!room.rewardError) {
+              room.rewardError = true;
+              broadcast(room, { type: 'error', message: '战绩暂未保存，服务器正在重试' });
+              console.error('Round save failed:', error.message);
             }
           }
-          room.awarded = room.rewardSlots.every(Boolean);
           room.rewardRetryAt = now + 1000;
         }
-        if (ticks % 2 === 0) broadcast(room, snapshot(room));
+        if (ticks % 2 === 0) {
+          broadcast(room, snapshot(room));
+          flushEvents(room);
+        }
       }
     }
     ticks++;
   }, 1000 / 30);
+  let pendingSaveError = false;
+  const settlementLoop = setInterval(() => {
+    try {
+      for (const [round, result] of pendingResults) {
+        profiles.recordRound(result);
+        pendingResults.delete(round);
+      }
+      profiles.settlePending();
+      pendingSaveError = false;
+    } catch (error) {
+      if (!pendingSaveError)
+        console.error('Pending round save failed; results remain unconfirmed:', error.message);
+      pendingSaveError = true;
+    }
+  }, 1000);
   const heartbeat = setInterval(() => {
     for (const ws of wss.clients) {
       if (!ws.alive) {
@@ -656,7 +874,21 @@ function createServer({
   function close() {
     clearInterval(loop);
     clearInterval(heartbeat);
-    for (const ws of wss.clients) ws.terminate();
+    clearInterval(settlementLoop);
+    for (const room of rooms.values()) retainResult(room);
+    for (const [round, result] of pendingResults) {
+      try {
+        profiles.recordRound(result);
+        pendingResults.delete(round);
+      } catch (error) {
+        console.error('Shutdown could not persist round:', round, error.message);
+      }
+    }
+    rooms.clear();
+    for (const ws of wss.clients) {
+      ws.room = null;
+      ws.terminate();
+    }
     wss.close();
     return new Promise((resolve) =>
       server.close(() => {

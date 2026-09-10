@@ -1,8 +1,9 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
-import { cpSync, createReadStream, statSync } from 'node:fs';
+import { copyFileSync, createReadStream, mkdirSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { ASSET_FILES } from './src/game/asset-manifest.ts';
 const root = fileURLToPath(new URL('.', import.meta.url));
 const assetRoot = fileURLToPath(new URL('../web/assets', import.meta.url));
 function assets(): Plugin {
@@ -52,7 +53,10 @@ function assets(): Plugin {
       });
     },
     closeBundle() {
-      cpSync(assetRoot, path.join(root, 'dist/assets'), { recursive: true });
+      const output = path.join(root, 'dist/assets');
+      mkdirSync(output, { recursive: true });
+      for (const file of ASSET_FILES)
+        copyFileSync(path.join(assetRoot, file), path.join(output, file));
     },
   };
 }

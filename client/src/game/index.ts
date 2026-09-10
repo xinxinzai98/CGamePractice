@@ -7,10 +7,19 @@ import {
   type GameMap,
   type InputState,
 } from '@dawn/simulation';
-import { loadAssets, createAnimations } from './assets';
+import { createAssetLoader } from './assets';
+import type { AssetLoader } from './asset-loader';
+import type { AssetPack } from './asset-manifest';
 import { BattleScene } from './scene';
 import type { GameRuntime, GameCallbacks, GameView, Pilot, PracticeOptions } from './types';
-export type { GameRuntime, GameCallbacks, GameView, Pilot, PracticeOptions } from './types';
+export type {
+  GameRuntime,
+  GameCallbacks,
+  GameView,
+  Pilot,
+  PracticeOptions,
+  AssetPack,
+} from './types';
 export interface Session {
   view: GameView;
   pilot: Pilot;
@@ -28,6 +37,12 @@ export interface Session {
   version: number;
 }
 export function createGame(container: HTMLElement, callbacks: GameCallbacks = {}): GameRuntime {
+  let destroyed = false;
+  let loader: AssetLoader | undefined;
+  const loaderWaiters = new Set<{
+    resolve(value: AssetLoader): void;
+    reject(error: Error): void;
+  }>();
   const session: Session = {
     view: 'cover',
     pilot: 'Asuka',
@@ -48,19 +63,13 @@ export function createGame(container: HTMLElement, callbacks: GameCallbacks = {}
     constructor() {
       super('Boot');
     }
-    preload() {
-      this.load.on('progress', (n: number) => callbacks.onProgress?.(n));
-      this.load.on('loaderror', (file: Phaser.Loader.File) =>
-        callbacks.onError?.(`素材加载失败：${file.key}`),
-      );
-      loadAssets(this);
-    }
     create() {
-      createAnimations(this);
-      session.ready = true;
-      this.scene.start('Backdrop');
-      this.scene.launch('Battle');
-      callbacks.onReady?.();
+      loader = createAssetLoader(this, (value, pack) => callbacks.onProgress?.(value, pack));
+      for (const waiter of loaderWaiters) waiter.resolve(loader);
+      loaderWaiters.clear();
+      void prepareAssets('cover').catch((error: Error) => {
+        if (!destroyed) callbacks.onError?.(error.message);
+      });
     }
   }
   class Backdrop extends Phaser.Scene {
@@ -75,12 +84,14 @@ export function createGame(container: HTMLElement, callbacks: GameCallbacks = {}
     }
     update() {
       if (!this.background) return;
+      const visible = !['battle', 'practice'].includes(session.view);
+      this.background.setVisible(visible);
+      if (!visible) return;
       const key = session.view === 'cover' ? 'cover-dawn' : 'hangar-dawn';
       if (this.last !== key) {
         this.background.setTexture(key);
         this.last = key;
       }
-      this.background.setVisible(!['battle', 'practice'].includes(session.view));
     }
   }
   const game = new Phaser.Game({
@@ -100,7 +111,24 @@ export function createGame(container: HTMLElement, callbacks: GameCallbacks = {}
     input: { keyboard: true },
     audio: { noAudio: true },
   });
-  let destroyed = false;
+  async function prepareAssets(pack: AssetPack) {
+    if (destroyed) throw new Error('游戏已关闭。');
+    const assets =
+      loader ??
+      (await new Promise<AssetLoader>((resolve, reject) => {
+        loaderWaiters.add({ resolve, reject });
+      }));
+    await assets.prepare('cover');
+    if (destroyed) throw new Error('游戏已关闭。');
+    if (!session.ready) {
+      session.ready = true;
+      // Keep Boot alive as the resource-loading scene for later packs.
+      game.scene.start('Backdrop');
+      game.scene.start('Battle');
+      callbacks.onReady?.();
+    }
+    if (pack !== 'cover') await assets.prepare(pack);
+  }
   const clear = () => {
     session.input = {};
     if (session.ready) (game.scene.getScene('Battle') as BattleScene).clearInput();
@@ -157,6 +185,7 @@ export function createGame(container: HTMLElement, callbacks: GameCallbacks = {}
     clear();
   }
   return {
+    prepareAssets,
     setView(view) {
       session.view = view;
       clear();
@@ -192,6 +221,9 @@ export function createGame(container: HTMLElement, callbacks: GameCallbacks = {}
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      loader?.destroy();
+      for (const waiter of loaderWaiters) waiter.reject(new Error('游戏已关闭。'));
+      loaderWaiters.clear();
       clear();
       window.removeEventListener('blur', blur);
       window.removeEventListener('focus', focus);

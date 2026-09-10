@@ -58,6 +58,7 @@ async function setup(t) {
       'latency',
       'connection',
       'briefing',
+      'events',
     ].map((name) => [name, (...args) => events.push([name, ...args])]),
   );
   const client = new RoomClient({ type: 'create' }, callbacks);
@@ -66,7 +67,7 @@ async function setup(t) {
   ws.open();
   return { client, ws, events, ...protocol, ...simulation };
 }
-const joined = { type: 'joined', code: 'ABC123', token: 'resume-token', slot: 1 };
+const joined = { type: 'joined', code: 'ABC123', token: 'resume-token', slot: 1, commandSeq: 0 };
 function start(map) {
   return {
     type: 'start',
@@ -136,6 +137,7 @@ describe('RoomClient boundary parsing', { concurrency: false }, () => {
       stage: 1,
       difficulty: 'normal',
       map: '旧日清晨',
+      unlocked: 12,
       slots: [
         { character: 'Asuka', username: null, connected: true, ready: false },
         { character: 'Rei', username: 'friend', connected: true, ready: true },
@@ -196,4 +198,69 @@ describe('RoomClient boundary parsing', { concurrency: false }, () => {
     assert.throws(() => ws.receive({ type: 'briefing' }), /render bug/);
     assert.equal(ws.readyState, 1);
   });
+});
+
+test('RoomClient sequences short taps, retries until consumed and deduplicates tick events', async (t) => {
+  const s = await setup(t);
+  s.ws.receive(joined);
+  s.ws.receive(start(s.campaign(0)));
+  s.client.input({ dir: 0, fire: false, item: true });
+  s.client.input({ dir: -1, fire: false });
+  let packet = s.ws.sent.at(-1);
+  assert.deepEqual(packet.input, { dir: -1, fire: false });
+  assert.deepEqual(packet.commands, [{ seq: 1, key: 'item' }]);
+  s.ws.receive({ type: 'input-ack', round: 'old-round', seq: 1 });
+  s.client.input({});
+  assert.equal(s.ws.sent.at(-1).commands.length, 1);
+  s.ws.receive({ type: 'input-ack', round: 'round-1', seq: 1 });
+  s.client.input({ ammo: 'HE' });
+  assert.deepEqual(s.ws.sent.at(-1).commands, [{ seq: 2, key: 'ammo', value: 'HE' }]);
+  const events = {
+    type: 'events',
+    round: 'round-1',
+    events: [
+      { seq: 1, name: 'skill' },
+      { seq: 2, name: 'fire' },
+    ],
+  };
+  s.ws.receive(events);
+  s.ws.receive(events);
+  s.ws.receive({ ...events, round: 'old-round' });
+  assert.deepEqual(
+    s.events.filter(([name]) => name === 'events'),
+    [['events', ['skill', 'fire']]],
+  );
+});
+test('explicit refresh resume starts command numbering after server received commands', async (t) => {
+  const s = await setup(t);
+  s.client.close(false);
+  const { RoomClient } = await import('../src/services/room-client.ts');
+  const resumed = RoomClient.resume({ code: 'ABC123', token: 'resume-token' }, s.client.callbacks);
+  t.after(() => resumed.close(false));
+  const ws = FakeWebSocket.sockets.at(-1);
+  ws.open();
+  assert.deepEqual(ws.sent[0], { type: 'resume', code: 'ABC123', token: 'resume-token' });
+  ws.receive({ ...joined, commandSeq: 7 });
+  ws.receive(start(s.campaign(0)));
+  resumed.input({ melee: true });
+  assert.equal(ws.sent.at(-1).commands[0].seq, 8);
+});
+test('same-round reconnection consumes its command baseline before the next round', async (t) => {
+  const s = await setup(t);
+  s.ws.receive(joined);
+  s.ws.receive(start(s.campaign(0)));
+  s.client.input({ melee: true });
+  s.ws.receive({ type: 'input-ack', round: 'round-1', seq: 1 });
+  s.ws.close();
+  t.mock.timers.tick(1200);
+  const resumed = FakeWebSocket.sockets.at(-1);
+  resumed.open();
+  resumed.receive({ ...joined, commandSeq: 1 });
+  resumed.receive(start(s.campaign(0)));
+  s.client.input({});
+  s.client.input({ item: true });
+  assert.equal(resumed.sent.at(-1).commands[0].seq, 2);
+  resumed.receive({ ...start(s.campaign(0)), round: 'round-2' });
+  s.client.input({ special: true });
+  assert.deepEqual(resumed.sent.at(-1).commands, [{ seq: 1, key: 'special' }]);
 });

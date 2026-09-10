@@ -16,7 +16,12 @@ function respond(t, payload, status = 200) {
 async function fixture() {
   const [api, rules] = await loaded;
   const profile = rules.Progression.createProfile();
-  return { api, rules, profile, session: { user: { username: 'SyntheticPilot' }, profile } };
+  return {
+    api,
+    rules,
+    profile,
+    session: { user: { username: 'SyntheticPilot', revision: 1 }, profile },
+  };
 }
 describe('HTTP protocol boundary', { concurrency: false }, () => {
   test('explicit logged-out session is accepted; omitted user and profile reject', async (t) => {
@@ -38,6 +43,36 @@ describe('HTTP protocol boundary', { concurrency: false }, () => {
     session.profile.coins = 'broken';
     respond(t, session);
     await assert.rejects(api.request('me'), { name: 'ProtocolError' });
+  });
+  test('authenticated response requires a valid revision and password rotates through a typed session', async (t) => {
+    const { api, session } = await fixture();
+    for (const revision of [undefined, -1, 1.2, '1']) {
+      const mock = respond(t, { ...session, user: { ...session.user, revision } });
+      await assert.rejects(api.request('me'), { name: 'ProtocolError' });
+      mock.mock.restore();
+    }
+    const mock = respond(t, session);
+    assert.deepEqual(
+      await api.request('password', {
+        currentPassword: 'synthetic-old',
+        newPassword: 'synthetic-new',
+      }),
+      session,
+    );
+    assert.equal(mock.mock.calls[0].arguments[0], '/api/password');
+  });
+  test('active room recovery requires explicit null or a valid private token', async (t) => {
+    const { api } = await fixture();
+    for (const room of [undefined, {}, { code: 'ABCDEF' }, { code: 'BAD', token: 'seat-secret' }]) {
+      const mock = respond(t, { room });
+      await assert.rejects(api.getActiveRoom(), { name: 'ProtocolError' });
+      mock.mock.restore();
+    }
+    const noRoom = respond(t, { room: null });
+    assert.equal(await api.getActiveRoom(), null);
+    noRoom.mock.restore();
+    respond(t, { room: { code: 'ABCDEF', token: 'synthetic-seat-token' } });
+    assert.deepEqual(await api.getActiveRoom(), { code: 'ABCDEF', token: 'synthetic-seat-token' });
   });
   test('valid current profile and typed battle history retain their values', async (t) => {
     const { api, rules, session } = await fixture();

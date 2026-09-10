@@ -19,6 +19,7 @@ export interface Lobby {
   stage: number;
   difficulty: 'relaxed' | 'normal' | 'hard';
   map: string;
+  unlocked: number;
   slots: (Seat | null)[];
 }
 export interface StartMessage {
@@ -31,10 +32,12 @@ export interface StartMessage {
 }
 export type NetworkState = Omit<GameState, 'map' | 'practice'>;
 export type RoomMessage =
-  | { type: 'joined'; code: string; token: string; slot: number }
+  | { type: 'joined'; code: string; token: string; slot: number; commandSeq: number }
   | ({ type: 'lobby' } & Lobby)
   | ({ type: 'start' } & StartMessage)
   | { type: 'state'; state: NetworkState; paused: boolean; waiting: boolean; rewardsSaved: boolean }
+  | { type: 'events'; round: string; events: { seq: number; name: string }[] }
+  | { type: 'input-ack'; round: string; seq: number }
   | { type: 'briefing' }
   | { type: 'pong'; stamp: number }
   | { type: 'error' | 'ended'; message: string };
@@ -124,6 +127,7 @@ export function parseRoomMessage(raw: string): RoomMessage | null {
         code: text(data.code, 'code'),
         token: text(data.token, 'token'),
         slot: index(data.slot, 1, 'slot'),
+        commandSeq: index(data.commandSeq, Number.MAX_SAFE_INTEGER, 'commandSeq'),
       };
     case 'lobby':
       if (!Array.isArray(data.slots) || data.slots.length !== 2) return invalid('slots');
@@ -134,6 +138,7 @@ export function parseRoomMessage(raw: string): RoomMessage | null {
         stage: index(data.stage, 2, 'stage'),
         difficulty: difficulty(data.difficulty),
         map: text(data.map, 'map'),
+        unlocked: index(data.unlocked, 12, 'unlocked') || invalid('unlocked'),
         slots: data.slots.map(seat),
       };
     case 'start': {
@@ -163,6 +168,25 @@ export function parseRoomMessage(raw: string): RoomMessage | null {
         paused: bool(data.paused, 'paused'),
         waiting: bool(data.waiting, 'waiting'),
         rewardsSaved: bool(data.rewardsSaved, 'rewardsSaved'),
+      };
+    case 'input-ack':
+      return {
+        type,
+        round: text(data.round, 'round'),
+        seq: index(data.seq, Number.MAX_SAFE_INTEGER, 'seq'),
+      };
+    case 'events':
+      if (!Array.isArray(data.events) || data.events.length > 256) return invalid('events');
+      return {
+        type,
+        round: text(data.round, 'round'),
+        events: data.events.map((item) => {
+          const event = object(item, 'event');
+          return {
+            seq: index(event.seq, Number.MAX_SAFE_INTEGER, 'event.seq'),
+            name: text(event.name, 'event.name'),
+          };
+        }),
       };
     case 'briefing':
       return { type };

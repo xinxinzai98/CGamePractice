@@ -1,6 +1,7 @@
 import { Progression, ProtocolError, type Profile, type DrawReward } from '@dawn/simulation';
 export interface User {
   username: string;
+  revision: number;
 }
 export interface Session {
   user: User | null;
@@ -15,6 +16,7 @@ export type SessionAction =
   | 'register'
   | 'login'
   | 'logout'
+  | 'password'
   | 'build'
   | 'shop'
   | 'equip'
@@ -25,6 +27,14 @@ export type ApiResults = Record<SessionAction, Session> & { draw: DrawResponse }
 export type ApiAction = keyof ApiResults;
 export type ApiResponse = ApiResults[ApiAction];
 export type RequestBody = Record<string, unknown>;
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
 export type ApiClient = <A extends ApiAction>(
   action: A,
   body?: RequestBody,
@@ -45,8 +55,9 @@ async function responseData(response: Response): Promise<Record<string, unknown>
   }
   const data = object(value);
   if (!response.ok)
-    throw new Error(
+    throw new ApiError(
       typeof data.error === 'string' ? data.error : `请求失败（HTTP ${response.status}）`,
+      response.status,
     );
   return data;
 }
@@ -56,7 +67,12 @@ function session(data: Record<string, unknown>): Session {
   if (typeof user.username !== 'string' || user.username.length === 0) {
     throw new ProtocolError('会话缺少有效的驾驶员代号');
   }
-  return { user: { username: user.username }, profile: Progression.parseProfile(data.profile) };
+  if (!Number.isSafeInteger(user.revision) || (user.revision as number) < 0)
+    throw new ProtocolError('会话缺少有效的存档版本');
+  return {
+    user: { username: user.username, revision: user.revision as number },
+    profile: Progression.parseProfile(data.profile),
+  };
 }
 export function request<A extends ApiAction>(action: A, body?: RequestBody): Promise<ApiResults[A]>;
 export async function request(action: ApiAction, body?: RequestBody): Promise<ApiResponse> {
@@ -86,6 +102,19 @@ export interface PublicRoom {
   stage: number;
   difficulty: 'relaxed' | 'normal' | 'hard';
   playersCount: number;
+}
+export async function getActiveRoom(): Promise<{ code: string; token: string } | null> {
+  const data = await responseData(await fetch('/api/room', { credentials: 'same-origin' }));
+  if (data.room === null) return null;
+  const room = object(data.room);
+  if (
+    typeof room.code !== 'string' ||
+    !/^[A-F0-9]{6}$/.test(room.code) ||
+    typeof room.token !== 'string' ||
+    room.token.length === 0
+  )
+    throw new ProtocolError('恢复席位信息无效');
+  return { code: room.code, token: room.token };
 }
 function integer(value: unknown, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {

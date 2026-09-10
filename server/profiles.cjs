@@ -6,107 +6,187 @@ const { DatabaseSync } = require('node:sqlite'),
   { promisify } = require('node:util');
 const scrypt = promisify(crypto.scrypt);
 const { RequestError } = require('./errors.cjs');
+const {
+  DATABASE_VERSION,
+  PROFILE_VERSION,
+  CONTENT_VERSION,
+  migrateDatabase,
+} = require('./profile-migrations.cjs');
 const rules = () => require('../packages/simulation/dist/index.js');
 const blank = () => rules().Progression.createProfile();
+
 function createProfiles(
   file,
-  { legacyFile = path.join(path.dirname(file), 'profiles.json') } = {},
+  { legacyFile = path.join(path.dirname(file), 'profiles.json'), secureCookies = false } = {},
 ) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   fs.chmodSync(file, 0o600);
-  db.exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
- CREATE TABLE IF NOT EXISTS users (key TEXT PRIMARY KEY, username TEXT NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS profiles (user_key TEXT PRIMARY KEY REFERENCES users(key), json TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS ledger (user_key TEXT NOT NULL REFERENCES users(key), event_key TEXT NOT NULL, kind TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY(user_key,event_key));
- CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY, at TEXT NOT NULL);`);
+  db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;');
   const transaction = (fn) => {
     db.exec('BEGIN IMMEDIATE');
     try {
       const value = fn();
       db.exec('COMMIT');
       return value;
-    } catch (e) {
+    } catch (error) {
       db.exec('ROLLBACK');
-      throw e;
+      throw error;
     }
   };
-  if (!db.prepare('SELECT 1 FROM migrations WHERE name=?').get('legacy-json-v1')) {
-    const legacy = fs.existsSync(legacyFile)
-      ? JSON.parse(fs.readFileSync(legacyFile, 'utf8'))
-      : null;
-    if (legacy && (!legacy.users || typeof legacy.users !== 'object'))
-      throw Error('Invalid legacy profiles file');
-    transaction(() => {
-      for (const u of Object.values(legacy?.users || {})) {
-        if (
-          typeof u.username !== 'string' ||
-          typeof u.salt !== 'string' ||
-          typeof u.hash !== 'string'
-        )
-          throw Error('Invalid legacy user');
-        const key = u.username.toLowerCase();
-        const inserted = db
-          .prepare('INSERT OR IGNORE INTO users VALUES (?,?,?,?)')
-          .run(key, u.username, u.salt, u.hash);
-        if (inserted.changes)
-          db.prepare('INSERT INTO profiles VALUES (?,?)').run(
-            key,
-            JSON.stringify(
-              rules().Progression.migrateLegacyProfile(u.profile, (message) =>
-                console.warn('Legacy profile migration:', message),
+  let migrationBackup;
+  try {
+    migrationBackup = migrateDatabase(db, file, rules().Progression.parseProfile);
+    if (!db.prepare('SELECT 1 FROM migrations WHERE name=?').get('legacy-json-v1')) {
+      const legacy = fs.existsSync(legacyFile)
+        ? JSON.parse(fs.readFileSync(legacyFile, 'utf8'))
+        : null;
+      if (legacy && (!legacy.users || typeof legacy.users !== 'object'))
+        throw Error('Invalid legacy profiles file');
+      transaction(() => {
+        for (const u of Object.values(legacy?.users || {})) {
+          if (
+            typeof u.username !== 'string' ||
+            typeof u.salt !== 'string' ||
+            typeof u.hash !== 'string'
+          )
+            throw Error('Invalid legacy user');
+          const key = u.username.toLowerCase();
+          const inserted = db
+            .prepare('INSERT OR IGNORE INTO users VALUES (?,?,?,?)')
+            .run(key, u.username, u.salt, u.hash);
+          if (inserted.changes)
+            db.prepare(
+              'INSERT INTO profiles (user_key,json,profile_version,content_version) VALUES (?,?,?,?)',
+            ).run(
+              key,
+              JSON.stringify(
+                rules().Progression.migrateLegacyProfile(u.profile, (message) =>
+                  console.warn('Legacy profile migration:', message),
+                ),
               ),
-            ),
-          );
-      }
-      db.prepare('INSERT INTO migrations VALUES (?,?)').run(
-        'legacy-json-v1',
-        new Date().toISOString(),
-      );
-    });
+              PROFILE_VERSION,
+              CONTENT_VERSION,
+            );
+        }
+        db.prepare('INSERT INTO migrations VALUES (?,?)').run(
+          'legacy-json-v1',
+          new Date().toISOString(),
+        );
+      });
+    }
+  } catch (error) {
+    db.close();
+    throw error;
   }
+
   let closed = false;
   const sessions = new Map(),
     pending = new Set();
   const byName = (name) => {
     if (typeof name !== 'string') return null;
     const row = db
-      .prepare('SELECT u.*,p.json FROM users u JOIN profiles p ON p.user_key=u.key WHERE u.key=?')
+      .prepare(
+        'SELECT u.*,p.json,p.revision,p.profile_version,p.content_version FROM users u JOIN profiles p ON p.user_key=u.key WHERE u.key=?',
+      )
       .get(name.toLowerCase());
-    return row
-      ? {
-          username: row.username,
-          salt: row.salt,
-          hash: row.hash,
-          profile: rules().Progression.parseProfile(JSON.parse(row.json)),
-        }
-      : null;
+    if (!row) return null;
+    if (row.profile_version !== PROFILE_VERSION || row.content_version !== CONTENT_VERSION)
+      throw Error('Stored profile version requires server migration');
+    return {
+      username: row.username,
+      salt: row.salt,
+      hash: row.hash,
+      revision: row.revision,
+      profile: rules().Progression.parseProfile(JSON.parse(row.json)),
+    };
   };
+  const resources = (p) => ({ coins: p.coins, tickets: p.tickets, inventory: [...p.inventory] });
+  function commitMutation(fresh, fn, operationId, kind, request) {
+    const key = fresh.username.toLowerCase(),
+      requestJson = JSON.stringify(request);
+    const previous = db
+      .prepare(
+        'SELECT kind,request_json,result_json FROM operations WHERE user_key=? AND operation_id=?',
+      )
+      .get(key, operationId);
+    if (previous) {
+      if (previous.kind !== kind || previous.request_json !== requestJson)
+        throw new RequestError('操作编号已用于另一项请求');
+      return { result: JSON.parse(previous.result_json), replayed: true };
+    }
+    const before = resources(fresh.profile),
+      result = fn(fresh.profile);
+    if (result && typeof result.then === 'function')
+      throw Error('Profile mutations must be synchronous');
+    fresh.profile = rules().Progression.parseProfile(fresh.profile);
+    const after = resources(fresh.profile),
+      delta = {
+        coins: after.coins - before.coins,
+        tickets: after.tickets - before.tickets,
+        inventoryAdded: after.inventory.filter((id) => !before.inventory.includes(id)),
+        inventoryRemoved: before.inventory.filter((id) => !after.inventory.includes(id)),
+      };
+    fresh.revision++;
+    db.prepare('UPDATE profiles SET json=?,revision=? WHERE user_key=?').run(
+      JSON.stringify(fresh.profile),
+      fresh.revision,
+      key,
+    );
+    db.prepare('INSERT INTO operations VALUES (?,?,?,?,?,?,?,?,?)').run(
+      key,
+      operationId,
+      kind,
+      requestJson,
+      JSON.stringify(result === undefined ? null : result),
+      JSON.stringify(delta),
+      JSON.stringify({ before, after }),
+      fresh.revision,
+      new Date().toISOString(),
+    );
+    return { result, replayed: false };
+  }
   function mutate(user, fn, eventKey = null, kind = 'update') {
-    let committed;
+    let fresh;
     const result = transaction(() => {
-      const fresh = byName(user.username);
+      fresh = byName(user.username);
       if (!fresh) throw Error('账户不存在');
-      if (eventKey) {
-        const inserted = db
-          .prepare('INSERT OR IGNORE INTO ledger VALUES (?,?,?,?)')
-          .run(user.username.toLowerCase(), eventKey, kind, new Date().toISOString());
-        if (!inserted.changes) {
-          committed = fresh.profile;
-          return false;
-        }
-      }
-      const result = fn(fresh.profile);
-      if (result && typeof result.then === 'function')
-        throw Error('Profile mutations must be synchronous');
-      db.prepare('UPDATE profiles SET json=? WHERE user_key=?').run(
-        JSON.stringify(fresh.profile),
-        user.username.toLowerCase(),
+      if (
+        eventKey &&
+        db
+          .prepare('SELECT 1 FROM ledger WHERE user_key=? AND event_key=?')
+          .get(user.username.toLowerCase(), eventKey)
+      )
+        return false;
+      const operation = commitMutation(
+        fresh,
+        fn,
+        eventKey || `mutation:${crypto.randomUUID()}`,
+        kind,
+        {},
       );
-      committed = fresh.profile;
-      return result;
+      if (eventKey)
+        db.prepare('INSERT INTO ledger VALUES (?,?,?,?)').run(
+          user.username.toLowerCase(),
+          eventKey,
+          kind,
+          new Date().toISOString(),
+        );
+      return operation.result;
     });
-    user.profile = committed;
+    Object.assign(user, { profile: fresh.profile, revision: fresh.revision });
+    return result;
+  }
+  function operation(user, operationId, kind, request, fn) {
+    if (typeof operationId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(operationId))
+      throw new RequestError('缺少有效操作编号');
+    let fresh;
+    const result = transaction(() => {
+      fresh = byName(user.username);
+      if (!fresh) throw Error('账户不存在');
+      return commitMutation(fresh, fn, operationId, kind, request).result;
+    });
+    Object.assign(user, { profile: fresh.profile, revision: fresh.revision });
     return result;
   }
   function credentials(username, password) {
@@ -122,33 +202,209 @@ function createProfiles(
       .map((x) => x.trim())
       .find((x) => x.startsWith('dawn_session='))
       ?.slice(13);
-  const get = (req) => {
+  const sessionOf = (req) => {
     const token = tokenOf(req),
       session = sessions.get(token);
     if (!session) return null;
-    if (session.expires < Date.now()) {
+    if (session.expires <= Date.now()) {
       sessions.delete(token);
       return null;
     }
-    return byName(session.key);
+    return session;
   };
+  const get = (req) => {
+    const session = sessionOf(req);
+    return session ? byName(session.key) : null;
+  };
+  const cookieOptions = `HttpOnly; SameSite=Strict; Path=/${secureCookies ? '; Secure' : ''}`;
   function loginCookie(user, res) {
     const token = crypto.randomBytes(32).toString('hex');
     if (sessions.size > 10000) {
       const now = Date.now();
-      for (const [key, s] of sessions) if (s.expires < now) sessions.delete(key);
+      for (const [key, session] of sessions) if (session.expires <= now) sessions.delete(key);
       if (sessions.size > 10000) sessions.delete(sessions.keys().next().value);
     }
     sessions.set(token, { key: user.username.toLowerCase(), expires: Date.now() + 7 * 86400000 });
-    res.setHeader(
-      'Set-Cookie',
-      `dawn_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800`,
-    );
+    res.setHeader('Set-Cookie', `dawn_session=${token}; ${cookieOptions}; Max-Age=604800`);
   }
+  function revokeSessions(username) {
+    const key = username.toLowerCase();
+    for (const [token, session] of sessions) if (session.key === key) sessions.delete(token);
+  }
+  async function verifyPassword(user, password) {
+    const hash = await scrypt(password, user?.salt || '00000000000000000000000000000000', 64);
+    return Boolean(user && crypto.timingSafeEqual(hash, Buffer.from(user.hash, 'hex')));
+  }
+  async function writePassword(username, password, expectedHash = null, kind = 'password-reset') {
+    const key = credentials(username, password),
+      salt = crypto.randomBytes(16).toString('hex'),
+      hash = (await scrypt(password, salt, 64)).toString('hex');
+    transaction(() => {
+      const fresh = byName(key);
+      if (!fresh) throw new RequestError('账户不存在');
+      if (expectedHash !== null && fresh.hash !== expectedHash)
+        throw new RequestError('密码已更新，请重新登录');
+      db.prepare('UPDATE users SET salt=?,hash=? WHERE key=?').run(salt, hash, key);
+      commitMutation(
+        fresh,
+        () => ({ username: fresh.username }),
+        `credential:${crypto.randomUUID()}`,
+        kind,
+        {},
+      );
+    });
+    revokeSessions(username);
+    return byName(username);
+  }
+  function battleRecord(result, participant) {
+    return rules().Progression.parseBattleRecord({
+      round: result.round,
+      at: result.at,
+      character: participant.character,
+      mission: result.mission,
+      stage: result.stage,
+      won: result.status === 'won',
+      xp: result.status === 'won' ? 100 + result.mission * 50 : 0,
+      score: result.score,
+      time: result.time,
+      stats: participant.stats,
+    });
+  }
+  function normalizeRound(result) {
+    if (typeof result.round !== 'string' || !result.round.length || result.round.length > 128)
+      throw Error('Reward round is invalid');
+    if (result.status !== 'won' && result.status !== 'lost')
+      throw Error('Reward result is not terminal');
+    if (
+      !Array.isArray(result.participants) ||
+      !result.participants.length ||
+      result.participants.length > 2
+    )
+      throw Error('Reward participants are invalid');
+    const usernames = new Set();
+    const normalized = {
+      round: result.round,
+      mission: result.mission,
+      stage: result.stage,
+      status: result.status,
+      score: result.score,
+      time: result.time,
+    };
+    normalized.participants = result.participants.map((participant) => {
+      const user = byName(participant.username);
+      if (!user) throw Error('Reward account does not exist');
+      const key = user.username.toLowerCase();
+      if (usernames.has(key)) throw Error('Reward account appears twice in one round');
+      usernames.add(key);
+      const record = battleRecord({ ...normalized, at: '2000-01-01T00:00:00.000Z' }, participant);
+      return { username: user.username, character: record.character, stats: record.stats };
+    });
+    return normalized;
+  }
+  function recordRound(result) {
+    const normalized = normalizeRound(result),
+      encoded = JSON.stringify(normalized);
+    return transaction(() => {
+      const previous = db
+        .prepare('SELECT result_json FROM rounds WHERE round_id=?')
+        .get(result.round);
+      if (previous) {
+        if (previous.result_json !== encoded)
+          throw Error('Round result conflicts with its recorded result');
+        return false;
+      }
+      db.prepare("INSERT INTO rounds VALUES (?,?,'pending',?,NULL)").run(
+        result.round,
+        encoded,
+        new Date().toISOString(),
+      );
+      return true;
+    });
+  }
+  function applyAward(p, result, participant) {
+    const record = battleRecord(result, participant),
+      xpBefore = p.characters[participant.character].xp;
+    p.characters[participant.character].xp = Math.min(300000, xpBefore + record.xp);
+    record.xp = p.characters[participant.character].xp - xpBefore;
+    if (record.won) {
+      const stageNumber = result.mission * 3 + result.stage + 1;
+      if (stageNumber <= p.unlocked)
+        p.unlocked = Math.max(p.unlocked, Math.min(12, stageNumber + 1));
+      p.tickets++;
+      p.coins += 60 + (stageNumber - 1) * 15;
+    }
+    p.records.history.unshift(record);
+    p.records.history = p.records.history.slice(0, 50);
+    p.records[record.won ? 'wins' : 'losses']++;
+    return record;
+  }
+  function settleRound(round) {
+    return transaction(() => {
+      const row = db.prepare('SELECT * FROM rounds WHERE round_id=?').get(round);
+      if (!row) throw Error('Round result has not been recorded');
+      if (row.state === 'settled') return false;
+      const result = { ...JSON.parse(row.result_json), at: row.recorded_at };
+      for (const participant of result.participants) {
+        const fresh = byName(participant.username);
+        if (!fresh) throw Error('Reward account does not exist');
+        // Account + round, never character + round, is the reward identity.
+        commitMutation(
+          fresh,
+          (p) => applyAward(p, result, participant),
+          `round:${round}`,
+          'battle',
+          { round },
+        );
+      }
+      db.prepare("UPDATE rounds SET state='settled',settled_at=? WHERE round_id=?").run(
+        new Date().toISOString(),
+        round,
+      );
+      return true;
+    });
+  }
+  function settlePending() {
+    const rows = db
+      .prepare("SELECT round_id FROM rounds WHERE state='pending' ORDER BY recorded_at,round_id")
+      .all();
+    for (const row of rows) settleRound(row.round_id);
+    return rows.length;
+  }
+  try {
+    settlePending();
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+
   return {
     get,
     byName,
     mutate,
+    revokeSessions,
+    recordRound,
+    settleRound,
+    settlePending,
+    sessionValid: (req) => sessionOf(req) !== null,
+    schemaInfo: () => ({
+      databaseVersion: DATABASE_VERSION,
+      profileVersion: PROFILE_VERSION,
+      contentVersion: CONTENT_VERSION,
+      migrationBackup,
+    }),
+    health: () => ({
+      databaseVersion: db.prepare('PRAGMA user_version').get().user_version,
+      pendingRounds: db.prepare("SELECT COUNT(*) AS count FROM rounds WHERE state='pending'").get()
+        .count,
+    }),
+    roundStatus: (round) =>
+      db.prepare('SELECT state FROM rounds WHERE round_id=?').get(round)?.state || null,
+    operations: (username) =>
+      db
+        .prepare(
+          'SELECT operation_id,kind,request_json,result_json,delta_json,balance_json,revision,at FROM operations WHERE user_key=? ORDER BY revision',
+        )
+        .all(username.toLowerCase()),
     close: () => {
       if (!closed) {
         db.close();
@@ -162,10 +418,12 @@ function createProfiles(
       try {
         const salt = crypto.randomBytes(16).toString('hex'),
           hash = (await scrypt(password, salt, 64)).toString('hex');
-        const user = { username, salt, hash, profile: blank() };
+        const user = { username, salt, hash, revision: 0, profile: blank() };
         transaction(() => {
           db.prepare('INSERT INTO users VALUES (?,?,?,?)').run(key, username, salt, hash);
-          db.prepare('INSERT INTO profiles VALUES (?,?)').run(key, JSON.stringify(user.profile));
+          db.prepare(
+            'INSERT INTO profiles (user_key,json,profile_version,content_version) VALUES (?,?,?,?)',
+          ).run(key, JSON.stringify(user.profile), PROFILE_VERSION, CONTENT_VERSION);
         });
         loginCookie(user, res);
         return user;
@@ -176,43 +434,77 @@ function createProfiles(
     async login(username, password, res) {
       const key = credentials(username, password),
         user = byName(key);
-      const hash = await scrypt(password, user?.salt || '00000000000000000000000000000000', 64);
-      if (!user || !crypto.timingSafeEqual(hash, Buffer.from(user.hash, 'hex')))
-        throw new RequestError('用户名或密码错误');
-      loginCookie(user, res);
-      return user;
+      if (!(await verifyPassword(user, password))) throw new RequestError('用户名或密码错误');
+      // A concurrent reset must not allow the previous password to issue a new token.
+      const fresh = byName(key);
+      if (fresh.hash !== user.hash) throw new RequestError('密码已更新，请重新登录');
+      loginCookie(fresh, res);
+      return fresh;
     },
     logout(req, res) {
       sessions.delete(tokenOf(req));
-      res.setHeader('Set-Cookie', 'dawn_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
+      res.setHeader('Set-Cookie', `dawn_session=; ${cookieOptions}; Max-Age=0`);
     },
-    draw(user) {
-      return mutate(
-        user,
-        (p) => {
-          if (p.tickets < 1) throw new RequestError('补给券不足，请完成教学或联网通关');
-          const pityTriggered = p.pity >= 9,
-            rare = pityTriggered || crypto.randomInt(100) < 25,
-            rarity = rare ? 'rare' : 'standard';
-          const pool = rules().Equipment.ITEMS.filter((i) =>
-              rare ? i.price >= 180 : i.price < 180,
-            ),
-            item = pool[crypto.randomInt(pool.length)],
-            duplicate = p.inventory.includes(item.id),
-            coins = duplicate ? (rare ? 80 : 40) : 0;
-          p.tickets--;
-          p.pity = rare ? 0 : p.pity + 1;
-          if (!duplicate) p.inventory.push(item.id);
-          p.coins += coins;
-          const reward = { itemId: item.id, rarity, duplicate, coins, pityTriggered };
-          p.drawHistory.unshift({ ...reward, at: new Date().toISOString() });
-          p.drawHistory = p.drawHistory.slice(0, 30);
-          return reward;
-        },
-        crypto.randomUUID(),
-        'draw',
+    async changePassword(user, currentPassword, newPassword, res) {
+      credentials(user.username, currentPassword);
+      const fresh = byName(user.username);
+      if (!(await verifyPassword(fresh, currentPassword))) throw new RequestError('当前密码错误');
+      const updated = await writePassword(
+        user.username,
+        newPassword,
+        fresh.hash,
+        'password-change',
       );
+      Object.assign(user, updated);
+      loginCookie(updated, res);
+      return updated;
     },
+    async resetPassword(username, newPassword) {
+      const user = await writePassword(username, newPassword);
+      return { username: user.username };
+    },
+    purchase(user, itemId, operationId) {
+      return operation(user, operationId, 'purchase', { itemId }, (p) => {
+        const item = rules().Equipment.ITEMS.find((i) => i.id === itemId);
+        if (!item) throw new RequestError('装备不存在');
+        if (p.inventory.includes(item.id)) throw new RequestError('已经拥有此装备');
+        if (p.coins < item.price) throw new RequestError('金币不足');
+        p.coins -= item.price;
+        p.inventory.push(item.id);
+        return { itemId: item.id, price: item.price };
+      });
+    },
+    completeTutorial(user, operationId) {
+      return operation(user, operationId, 'tutorial', {}, (p) => {
+        const granted = !p.tutorialComplete;
+        if (granted) {
+          p.tutorialComplete = true;
+          p.tickets += 3;
+        }
+        return { granted, tickets: granted ? 3 : 0 };
+      });
+    },
+    draw(user, operationId) {
+      return operation(user, operationId, 'draw', {}, (p) => {
+        if (p.tickets < 1) throw new RequestError('补给券不足，请完成教学或联网通关');
+        const pityTriggered = p.pity >= 9,
+          rare = pityTriggered || crypto.randomInt(100) < 25,
+          rarity = rare ? 'rare' : 'standard';
+        const pool = rules().Equipment.ITEMS.filter((i) => (rare ? i.price >= 180 : i.price < 180)),
+          item = pool[crypto.randomInt(pool.length)],
+          duplicate = p.inventory.includes(item.id),
+          coins = duplicate ? (rare ? 80 : 40) : 0;
+        p.tickets--;
+        p.pity = rare ? 0 : p.pity + 1;
+        if (!duplicate) p.inventory.push(item.id);
+        p.coins += coins;
+        const reward = { itemId: item.id, rarity, duplicate, coins, pityTriggered };
+        p.drawHistory.unshift({ ...reward, at: new Date().toISOString() });
+        p.drawHistory = p.drawHistory.slice(0, 30);
+        return reward;
+      });
+    },
+    // Kept for older one-player integrations. Multiplayer uses recordRound + settleRound.
     award(username, character, game, room) {
       const user = byName(username);
       if (!user) throw Error('Reward account does not exist');
@@ -220,34 +512,22 @@ function createProfiles(
       if (!player) throw Error('Reward character is absent from the round');
       if (!Number.isInteger(room.stage) || room.stage < 0 || room.stage > 2)
         throw Error('Reward stage is invalid');
+      const result = normalizeRound({
+        round: room.round,
+        mission: room.mission,
+        stage: room.stage,
+        status: game.status,
+        score: game.score,
+        time: game.time,
+        participants: [{ username, character, stats: player.stats }],
+      });
       return mutate(
         user,
         (p) => {
-          const won = game.status === 'won',
-            xp = won ? 100 + room.mission * 50 : 0;
-          p.characters[character].xp = Math.min(300000, p.characters[character].xp + xp);
-          if (won) {
-            p.unlocked = Math.max(p.unlocked, Math.min(12, room.mission * 3 + room.stage + 2));
-            p.tickets++;
-            p.coins += 60 + (room.mission * 3 + room.stage) * 15;
-          }
-          p.records.history.unshift({
-            round: room.round,
-            at: new Date().toISOString(),
-            character,
-            mission: room.mission,
-            stage: room.stage,
-            won,
-            xp,
-            score: game.score,
-            time: game.time,
-            stats: player.stats,
-          });
-          p.records.history = p.records.history.slice(0, 50);
-          p.records[won ? 'wins' : 'losses']++;
+          applyAward(p, { ...result, at: new Date().toISOString() }, result.participants[0]);
           return true;
         },
-        `round:${room.round}:${character}`,
+        `round:${room.round}`,
         'battle',
       );
     },

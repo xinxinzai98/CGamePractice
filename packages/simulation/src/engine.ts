@@ -1,8 +1,11 @@
 import { ValidationError } from './errors';
 import * as Progression from './progression';
 import * as Equipment from './equipment';
+import { BOSSES, campaignDefinition } from './content';
+import type { BossAttack } from './content';
 import type {
   Actor,
+  BossId,
   Character,
   Cooperation,
   Effect,
@@ -57,7 +60,17 @@ export function validateMap(value: unknown): GameMap {
     enemies: MapEnemy[] = input.enemies.map((v) => {
       const e = record(v);
       if (typeof e.type !== 'number') throw new ValidationError('敌人类型无效');
-      return { ...parsePoint(v), type: e.type, ...(e.boss ? { boss: true } : {}) };
+      if (
+        e.encounterId !== undefined &&
+        (typeof e.encounterId !== 'string' || !Object.hasOwn(BOSSES, e.encounterId) || !e.boss)
+      )
+        throw new ValidationError('首领定义无效');
+      return {
+        ...parsePoint(v),
+        type: e.type,
+        ...(e.boss ? { boss: true } : {}),
+        ...(e.encounterId ? { encounterId: e.encounterId as BossId } : {}),
+      };
     });
   const pass = (x: number, y: number) =>
     Number.isInteger(x) &&
@@ -115,14 +128,51 @@ export function validateMap(value: unknown): GameMap {
     puzzle = input.puzzle
       ? { redPad: parsePoint(rawPuzzle.redPad), bluePad: parsePoint(rawPuzzle.bluePad) }
       : undefined;
+  const gates =
+    rawPuzzle.gates === undefined
+      ? undefined
+      : (() => {
+          if (!Array.isArray(rawPuzzle.gates)) throw new ValidationError('闸门数据无效');
+          const ids = new Set<string>(),
+            cells = new Set<string>();
+          return rawPuzzle.gates.map((v) => {
+            const gate = record(v),
+              point = parsePoint(v),
+              key = `${point.x},${point.y}`;
+            if (
+              typeof gate.id !== 'string' ||
+              !/^[a-zA-Z0-9_-]{1,80}$/.test(gate.id) ||
+              ids.has(gate.id) ||
+              cells.has(key) ||
+              !pass(point.x, point.y) ||
+              occupied.has(key)
+            )
+              throw new ValidationError('闸门需要唯一标识与独立可通行位置');
+            ids.add(gate.id);
+            cells.add(key);
+            return { id: gate.id, ...point };
+          });
+        })();
   if (
     puzzle &&
-    [puzzle.redPad, puzzle.bluePad].some((p) => !pass(p.x, p.y) || !seen.has(`${p.x},${p.y}`))
+    ([puzzle.redPad, puzzle.bluePad].some((p) => !pass(p.x, p.y) || !seen.has(`${p.x},${p.y}`)) ||
+      (puzzle.redPad.x === puzzle.bluePad.x && puzzle.redPad.y === puzzle.bluePad.y))
   )
     throw new ValidationError('解谜节点必须可到达');
   return {
     version: 1,
-    ...(puzzle ? { puzzle: { redPad: { ...puzzle.redPad }, bluePad: { ...puzzle.bluePad } } } : {}),
+    ...(puzzle
+      ? {
+          puzzle: {
+            redPad: { ...puzzle.redPad },
+            bluePad: { ...puzzle.bluePad },
+            ...(gates ? { gates } : {}),
+          },
+        }
+      : {}),
+    ...(typeof input.encounterId === 'string'
+      ? { encounterId: input.encounterId.slice(0, 80) }
+      : {}),
     artSet: input.artSet === 'new' ? 'new' : 'legacy',
     ...(cooperation
       ? {
@@ -142,90 +192,14 @@ export function validateMap(value: unknown): GameMap {
       y: e.y,
       type: e.type,
       ...(e.boss ? { boss: true } : {}),
+      ...(e.encounterId ? { encounterId: e.encounterId } : {}),
     })),
   };
 }
 export function campaign(index: number, stage = 0): GameMap {
   index = clamp(Math.floor(Number(index) || 0), 0, 3);
   stage = clamp(Math.floor(Number(stage) || 0), 0, 2);
-  // Round_1 restoration: original 10x10 grass, original player/enemy cells.
-  // Stage 1 is a new modest water/bridge variation, not claimed as recovered source.
-  if (index === 0 && stage < 2) {
-    const tiles = Array.from({ length: 10 }, () => Array(10).fill(0)),
-      spawns = [
-        { x: 2, y: 5 },
-        { x: 9, y: 5 },
-      ],
-      enemies = [
-        { x: 0, y: 3, type: 1 },
-        { x: 2, y: 0, type: 2 },
-        { x: 7, y: 0, type: 1 },
-        { x: 9, y: 3, type: 2 },
-      ];
-    if (stage === 1) {
-      for (let y = 1; y < 9; y++) tiles[y][5] = 1;
-      tiles[3][5] = tiles[6][5] = 4;
-      enemies.push({ x: 7, y: 8, type: 2 });
-    }
-    return validateMap({
-      name: stage ? '旧日清晨 · 河道变奏' : '旧日清晨 · Round 1',
-      width: 10,
-      height: 10,
-      tiles,
-      spawns,
-      enemies,
-    });
-  }
-  const width = index === 0 ? 16 : 26 + index * 4 + stage * 2,
-    height = index === 0 ? 14 : 20 + index * 2 + stage * 2;
-  const tiles = Array.from({ length: height }, () => Array(width).fill(0));
-  for (let y = 0; y < height; y++)
-    for (let x = 0; x < width; x++) {
-      if (!x || !y || x === width - 1 || y === height - 1) tiles[y][x] = 2;
-      else if (x === Math.floor(width / 2) && y > 2 && y < height - 3) tiles[y][x] = 1;
-      else if ((x % 7 === 4 || x % 7 === 5) && y % 6 === (3 + stage) % 6) tiles[y][x] = 2;
-      else if (y % 7 === 1) tiles[y][x] = index > 1 ? 5 : 3;
-    }
-  for (const y of [4, Math.floor(height / 2), height - 5]) tiles[y][Math.floor(width / 2)] = 4;
-  const spawns = [
-    { x: 2, y: height - 3 },
-    { x: 4, y: height - 3 },
-  ];
-  spawns.forEach((p) => (tiles[p.y][p.x] = 3));
-  const enemies: MapEnemy[] = [];
-  for (let i = 0; i < 6 + index * 4 + stage * 3; i++) {
-    let x = 2 + ((i * 5) % (width - 4)),
-      y = 2 + Math.floor(i / 4) * 4;
-    while ([1, 2].includes(tiles[y][x]) || enemies.some((e) => e.x === x && e.y === y)) {
-      x++;
-      if (x >= width - 1) {
-        x = 2;
-        y++;
-      }
-    }
-    enemies.push({
-      x,
-      y,
-      type: index > 0 && i % 7 === 6 ? 4 : index > 1 && i % 4 === 0 ? 3 : 1 + (i % 2),
-    });
-  }
-  if (stage === 2) {
-    enemies[enemies.length - 1].boss = true;
-    enemies[enemies.length - 1].type = 3;
-  }
-  return validateMap({
-    artSet: 'new',
-    ...(stage === 1 ? { puzzle: { redPad: spawns[0], bluePad: spawns[1] } } : {}),
-    ...(stage === 2 ? { cooperation: { pads: spawns.map((p) => ({ ...p })) } } : {}),
-    name:
-      ['旧日清晨', '河岸防线', '纵深行动', '黎明之战'][index] +
-      (stage ? ` · ${index + 1}-${stage + 1}` : ''),
-    width,
-    height,
-    tiles,
-    spawns,
-    enemies,
-  });
+  return campaignDefinition(index, stage);
 }
 export function blankMap(w = 26, h = 20): GameMap {
   const m = campaign(0);
@@ -289,36 +263,39 @@ export class Game implements GameState {
     this.events = [];
     this.difficulty = difficulty;
     this.coop = coop;
-    this.cooperation = this.map.cooperation
-      ? {
-          pads: this.map.cooperation.pads.map((p) => ({
-            x: (p.x + 0.5) * TILE,
-            y: (p.y + 0.5) * TILE,
-          })),
-          charge: 0,
-          openFor: 0,
-          required: 1.5,
-          label: this.map.cooperation.label,
-        }
-      : null;
-    if (this.map.puzzle) {
-      const m = this.map.puzzle;
-      this.cooperation = {
-        pads: [],
-        charge: 0,
-        openFor: 0,
-        required: 1,
-        label: '明日香持续供能 · 绫波丽同步激活',
-        puzzle: {
-          redPad: { x: (m.redPad.x + 0.5) * TILE, y: (m.redPad.y + 0.5) * TILE },
-          bluePad: { x: (m.bluePad.x + 0.5) * TILE, y: (m.bluePad.y + 0.5) * TILE },
-          powered: false,
-          solved: false,
-          charge: 0,
-          gates: [],
-        },
-      };
-    }
+    const pixels = (p: Point): Point => ({ x: (p.x + 0.5) * TILE, y: (p.y + 0.5) * TILE });
+    const channel = this.map.cooperation;
+    const puzzle = this.map.puzzle;
+    this.cooperation =
+      channel || puzzle
+        ? {
+            pads: channel ? channel.pads.map(pixels) : [],
+            charge: 0,
+            openFor: 0,
+            required: 1.5,
+            label: channel ? channel.label : '两名驾驶员分别站上双色节点 · 保持同步开启闸门',
+            gates: (puzzle?.gates || []).map((g) => ({ ...g, open: this.practice })),
+            objective: {
+              id: `${this.map.encounterId || 'custom'}-${puzzle ? 'entry' : 'core'}`,
+              text: puzzle
+                ? '分别站上红蓝节点，保持同步开启闸门'
+                : '两人分别站上同步节点，打开核心屏障',
+              state: 'active',
+            },
+            ...(puzzle
+              ? {
+                  puzzle: {
+                    redPad: pixels(puzzle.redPad),
+                    bluePad: pixels(puzzle.bluePad),
+                    powered: false,
+                    solved: this.practice,
+                    charge: 0,
+                    gates: (puzzle.gates || []).map(({ x, y }) => ({ x, y })),
+                  },
+                }
+              : {}),
+          }
+        : null;
     this.players = this.map.spawns.slice(0, coop ? 2 : 1).map(
       (p, i) =>
         ({
@@ -381,9 +358,34 @@ export class Game implements GameState {
       y: (e.y + 0.5) * TILE,
       dir: 2,
       r: 18,
-      hp: e.boss ? 600 : e.type === 3 ? 100 : e.type === 4 ? 70 : 50,
-      maxHp: e.boss ? 600 : e.type === 3 ? 100 : e.type === 4 ? 70 : 50,
+      hp: e.boss
+        ? BOSSES[e.encounterId || 'dawn-prism'].hp
+        : e.type === 3
+          ? 100
+          : e.type === 4
+            ? 70
+            : 50,
+      maxHp: e.boss
+        ? BOSSES[e.encounterId || 'dawn-prism'].hp
+        : e.type === 3
+          ? 100
+          : e.type === 4
+            ? 70
+            : 50,
       boss: !!e.boss,
+      ...(e.boss
+        ? {
+            encounter: {
+              id: e.encounterId || 'dawn-prism',
+              phaseId: BOSSES[e.encounterId || 'dawn-prism'].phases[0].id,
+              phaseIndex: 0,
+              phaseName: BOSSES[e.encounterId || 'dawn-prism'].phases[0].name,
+              shielded: !this.practice && !!channel,
+              attackIndex: 0,
+              telegraph: null,
+            },
+          }
+        : {}),
       type: e.type,
       team: 0,
       repair: 6,
@@ -407,6 +409,16 @@ export class Game implements GameState {
     this.effects = [];
     for (const a of [...this.players, ...this.enemies]) {
       a.hp = a.maxHp;
+      if (a.team === 0 && a.encounter) {
+        const first = BOSSES[a.encounter.id].phases[0];
+        a.encounter.phaseIndex = 0;
+        a.encounter.phaseId = first.id;
+        a.encounter.phaseName = first.name;
+        a.encounter.shielded = false;
+        a.encounter.attackIndex = 0;
+        a.encounter.telegraph = null;
+        a.warning = 0;
+      }
       a.armorBreakUntil = 0;
       a.slowUntil = 0;
       if (a.team === 1) {
@@ -430,6 +442,7 @@ export class Game implements GameState {
     return this.seed / 4294967296;
   }
   tile(x: number, y: number) {
+    if (this.cooperation?.gates?.some((g) => !g.open && g.x === x && g.y === y)) return 2;
     return this.map.tiles[y]?.[x] ?? 2;
   }
   pass(x: number, y: number) {
@@ -444,8 +457,16 @@ export class Game implements GameState {
         if ((x - nx) ** 2 + (y - ny) ** 2 < r * r) return false;
       }
     if (actor)
-      for (const a of [...this.players, ...this.enemies])
-        if (a !== actor && a.hp > 0 && Math.hypot(a.x - x, a.y - y) < r + a.r - 2) return false;
+      for (const a of [...this.players, ...this.enemies]) {
+        if (a === actor || a.hp <= 0) continue;
+        const distance = Math.hypot(a.x - x, a.y - y),
+          currentDistance = Math.hypot(a.x - actor.x, a.y - actor.y),
+          separation = r + a.r - 2;
+        // A revived actor may overlap their rescuer. Permit movement out of an
+        // existing overlap, while still blocking entry into another actor.
+        if (distance < separation && (currentDistance >= separation || distance <= currentDistance))
+          return false;
+      }
     return true;
   }
   move(a: Actor, dx: number, dy: number) {
@@ -512,17 +533,119 @@ export class Game implements GameState {
     this.events.push(missile ? 'missile' : 'fire');
   }
   fireBoss(e: Enemy) {
-    const angle = Math.atan2(DIRS[e.dir][1], DIRS[e.dir][0]);
-    for (const offset of [-0.28, 0, 0.28]) {
-      this.shoot(e);
-      const b = this.bullets[this.bullets.length - 1];
-      b.dx = Math.cos(angle + offset);
-      b.dy = Math.sin(angle + offset);
-      b.speed = 240;
-      b.damage *= 0.7;
-      b.boss = true;
+    const encounter = e.encounter!;
+    const telegraph = encounter.telegraph!;
+    const phase = BOSSES[encounter.id].phases[encounter.phaseIndex];
+    const attack = phase.attacks[encounter.attackIndex % phase.attacks.length];
+    const multiplier = this.difficulty === 'relaxed' ? 0.5 : this.difficulty === 'hard' ? 1.4 : 1;
+    for (const angle of telegraph.angles) {
+      const dx = Math.cos(angle),
+        dy = Math.sin(angle);
+      this.bullets.push({
+        id: `b${++this.bulletSeq}`,
+        x: telegraph.x + dx * 26,
+        y: telegraph.y + dy * 26,
+        dx,
+        dy,
+        r: telegraph.width / 2,
+        team: 0,
+        damage: attack.damage * multiplier,
+        speed: attack.speed,
+        life: (telegraph.radius - 26) / attack.speed,
+        missile: false,
+        ammo: null,
+        owner: e.id,
+        pierce: 0,
+        hitIds: [],
+        boss: true,
+      });
     }
+    encounter.telegraph = null;
+    encounter.attackIndex++;
+    e.firePose = 0.3;
+    e.fire =
+      attack.cooldown *
+      (this.difficulty === 'hard' ? 0.85 : this.difficulty === 'relaxed' ? 1.2 : 1);
+    this.events.push('fire');
     this.effect(e.x, e.y, 'barrage', 90, e.dir);
+  }
+  warnBoss(e: Enemy, attack: BossAttack) {
+    const encounter = e.encounter!;
+    const angle = Math.atan2(DIRS[e.dir][1], DIRS[e.dir][0]);
+    const angles =
+      attack.pattern === 'fan'
+        ? [-0.35, 0, 0.35].map((offset) => angle + offset)
+        : attack.pattern === 'cross'
+          ? [0, 1, 2, 3].map((i) => angle + (i * Math.PI) / 2)
+          : attack.pattern === 'ring'
+            ? Array.from(
+                { length: 12 },
+                (_, i) => ((i + (encounter.attackIndex % 2) / 2) * Math.PI) / 6,
+              )
+            : [angle];
+    encounter.telegraph = {
+      id: `${e.id}-${encounter.phaseId}-${encounter.attackIndex}`,
+      pattern: attack.pattern,
+      x: e.x,
+      y: e.y,
+      dir: e.dir,
+      angles,
+      width: attack.pattern === 'beam' ? 14 : 10,
+      radius: 480,
+      remaining: attack.warning,
+      duration: attack.warning,
+    };
+    e.warning = attack.warning;
+  }
+  updateBoss(e: Enemy, alive: Player[], dt: number) {
+    const encounter = e.encounter!;
+    e.moving = false;
+    encounter.shielded = !!this.cooperation?.pads.length && this.cooperation.openFor <= 0;
+    if (this.cooperation?.puzzle && !this.cooperation.puzzle.solved) return;
+    if (encounter.telegraph) {
+      e.warning = Math.max(0, e.warning - dt);
+      encounter.telegraph.remaining = e.warning;
+      if (e.warning === 0) this.fireBoss(e);
+      return;
+    }
+    if (e.fire > 0) return;
+    const target = alive.reduce((a, b) =>
+      Math.hypot(a.x - e.x, a.y - e.y) < Math.hypot(b.x - e.x, b.y - e.y) ? a : b,
+    );
+    const dx = target.x - e.x,
+      dy = target.y - e.y;
+    e.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : dy > 0 ? 2 : 0;
+    const phase = BOSSES[encounter.id].phases[encounter.phaseIndex];
+    this.warnBoss(e, phase.attacks[encounter.attackIndex % phase.attacks.length]);
+  }
+  advanceBossPhase(e: Enemy) {
+    const encounter = e.encounter!;
+    const next = BOSSES[encounter.id].phases[encounter.phaseIndex + 1];
+    if (!next || e.hp > e.maxHp * next.threshold) return;
+    encounter.phaseIndex++;
+    encounter.phaseId = next.id;
+    encounter.phaseName = next.name;
+    encounter.attackIndex = 0;
+    encounter.telegraph = null;
+    encounter.shielded = !this.practice && !!this.cooperation?.pads.length;
+    e.warning = 0;
+    e.fire = 1.5;
+    if (this.cooperation) {
+      this.cooperation.charge = 0;
+      this.cooperation.openFor = 0;
+    }
+    this.bullets = this.bullets.filter((b) => b.owner !== e.id);
+    this.effects.push({
+      x: e.x,
+      y: e.y,
+      kind: 'phase',
+      life: 1.5,
+      max: 1.5,
+      radius: 100,
+      dir: 0,
+      label: next.name,
+    });
+    this.events.push('skill');
   }
   impactBullet(a: Actor, b: Projectile) {
     // Abstract facing armor: incoming direction opposite the defender is frontal.
@@ -719,7 +842,8 @@ export class Game implements GameState {
     }
   }
   damage(a: Actor, amount: number, owner: string | null = null) {
-    if (a.boss && !this.practice && (!this.cooperation || this.cooperation.openFor <= 0)) return;
+    const boss = a.boss ? (a as Enemy) : null;
+    if (boss?.encounter?.shielded && !this.practice) return;
     if (
       a.hp <= 0 ||
       (a.shield ?? 0) > 0 ||
@@ -744,10 +868,15 @@ export class Game implements GameState {
       a.lastOwner = owner ?? undefined;
       a.lastHit = this.time;
     }
+    if (boss?.encounter && !this.practice) {
+      const next = BOSSES[boss.encounter.id].phases[boss.encounter.phaseIndex + 1];
+      if (next) amount = Math.min(amount, Math.max(0, boss.hp - boss.maxHp * next.threshold));
+    }
     const dealt = Math.min(a.hp, amount);
     if (p) p.stats.damage += dealt;
     if (a.team && a.stats) a.stats.taken += dealt;
     a.hp = Math.max(0, a.hp - amount);
+    if (boss?.encounter && a.hp > 0) this.advanceBossPhase(boss);
     a.flash = 0.18;
     this.effect(a.x, a.y);
     this.events.push('hit');
@@ -797,6 +926,51 @@ export class Game implements GameState {
       )
         return -1;
     return dir;
+  }
+  updateCooperation(alive: Player[], dt: number) {
+    const c = this.cooperation;
+    if (!c || this.practice) return;
+    const paired = (first: Point, second: Point) =>
+      alive.some(
+        (a) =>
+          Math.hypot(a.x - first.x, a.y - first.y) < 28 &&
+          alive.some((b) => b !== a && Math.hypot(b.x - second.x, b.y - second.y) < 28),
+      );
+    if (c.puzzle && !c.puzzle.solved) {
+      const p = c.puzzle;
+      p.powered = alive.some((a) => Math.hypot(a.x - p.redPad.x, a.y - p.redPad.y) < 28);
+      p.charge = paired(p.redPad, p.bluePad) ? Math.min(1, p.charge + dt / 1.5) : 0;
+      if (p.charge < 1) return;
+      p.solved = true;
+      for (const gate of c.gates || []) gate.open = true;
+      this.effect(p.bluePad.x, p.bluePad.y, 'combo', 150);
+      this.events.push('skill');
+    }
+    if (c.pads.length === 2) {
+      if (c.openFor > 0) {
+        c.openFor = Math.max(0, c.openFor - dt);
+        c.charge = 0;
+      } else {
+        c.charge = paired(c.pads[0], c.pads[1]) ? Math.min(c.required, c.charge + dt) : 0;
+        if (c.charge >= c.required) {
+          const boss = this.enemies.find((e) => e.encounter && e.hp > 0);
+          c.openFor = boss?.encounter
+            ? BOSSES[boss.encounter.id].phases[boss.encounter.phaseIndex].exposure
+            : 8;
+          c.charge = 0;
+          this.effect(c.pads[0].x, c.pads[0].y, 'combo', 180);
+          this.events.push('skill');
+        }
+      }
+    }
+    if (c.objective) {
+      c.objective.id = `${this.map.encounterId || 'custom'}-${c.pads.length ? 'core' : 'clear'}`;
+      c.objective.text = c.pads.length
+        ? c.openFor > 0
+          ? `核心暴露 ${Math.ceil(c.openFor)} 秒 · 集中火力；留意攻击预警`
+          : '两人分别站上同步节点 · 重新打开核心屏障'
+        : '闸门已开启 · 清除前方敌人';
+    }
   }
   step(dt: number, inputs: InputState[] = []) {
     if (this.status !== 'playing') return;
@@ -871,46 +1045,7 @@ export class Game implements GameState {
       }
     }
     const alive = this.players.filter((p) => p.hp > 0);
-    if (this.cooperation?.puzzle && !this.practice) {
-      const p = this.cooperation.puzzle;
-      if (!p.solved) {
-        p.powered = alive.some(
-          (a) => a.character === 'Asuka' && Math.hypot(a.x - p.redPad.x, a.y - p.redPad.y) < 28,
-        );
-        const active =
-          p.powered &&
-          alive.some(
-            (a) => a.character === 'Rei' && Math.hypot(a.x - p.bluePad.x, a.y - p.bluePad.y) < 28,
-          );
-        p.charge = active ? Math.min(1, p.charge + dt) : 0;
-        if (p.charge >= 1) {
-          p.solved = true;
-          this.effect(p.bluePad.x, p.bluePad.y, 'combo', 150);
-          this.events.push('skill');
-        }
-      }
-    }
-    if (this.cooperation && !this.cooperation.puzzle && !this.practice) {
-      const c = this.cooperation;
-      if (c.openFor > 0) {
-        c.openFor = Math.max(0, c.openFor - dt);
-        c.charge = 0;
-      } else {
-        const [first, second] = c.pads;
-        const paired = alive.some(
-          (a) =>
-            Math.hypot(a.x - first.x, a.y - first.y) < 28 &&
-            alive.some((b) => b !== a && Math.hypot(b.x - second.x, b.y - second.y) < 28),
-        );
-        c.charge = paired ? Math.min(c.required, c.charge + dt) : 0;
-        if (c.charge >= c.required) {
-          c.openFor = 8;
-          c.charge = 0;
-          this.effect(first.x, first.y, 'combo', 180);
-          this.events.push('skill');
-        }
-      }
-    }
+    this.updateCooperation(alive, dt);
 
     for (const e of this.enemies) {
       if (this.practice) {
@@ -924,6 +1059,10 @@ export class Game implements GameState {
       e.think -= dt;
       e.fire -= dt;
       if (!alive.length) break;
+      if (e.encounter) {
+        this.updateBoss(e, alive, dt);
+        continue;
+      }
       if (e.type === 4) {
         e.moving = false;
         e.repair -= dt;
@@ -944,12 +1083,11 @@ export class Game implements GameState {
         }
         continue;
       }
-      if ((e.type === 2 || e.boss) && e.warning > 0) {
+      if (e.type === 2 && e.warning > 0) {
         e.warning = Math.max(0, e.warning - dt);
         e.moving = false;
         if (e.warning === 0) {
-          if (e.boss) this.fireBoss(e);
-          else this.shoot(e);
+          this.shoot(e);
           e.fire =
             4 * (this.difficulty === 'hard' ? 0.7 : this.difficulty === 'relaxed' ? 1.25 : 1);
         }
@@ -964,8 +1102,7 @@ export class Game implements GameState {
         e.think = 0.7 + this.random() * 0.35;
       }
       const speed =
-        (e.boss ? 32 : e.type === 3 ? 58 : e.type === 1 ? 90 : 60) *
-        ((e.slowUntil ?? 0) > this.time ? 0.5 : 1);
+        (e.type === 3 ? 58 : e.type === 1 ? 90 : 60) * ((e.slowUntil ?? 0) > this.time ? 0.5 : 1);
       // Align with corridor centers before turning, avoiding diagonal corner trapping.
       const [dx, dy] = DIRS[e.dir];
       let mx = dx * speed * dt,
@@ -984,7 +1121,7 @@ export class Game implements GameState {
       if (e.fire <= 0) {
         const d = this.lineOfFire(e, target);
         if (d >= 0) e.dir = d;
-        if (e.type === 2 || e.boss) {
+        if (e.type === 2) {
           e.warning = 0.7;
           this.effects.push({
             x: e.x,
@@ -997,9 +1134,7 @@ export class Game implements GameState {
           });
           continue;
         }
-        if (e.boss) {
-          this.fireBoss(e);
-        } else this.shoot(e);
+        this.shoot(e);
         e.fire =
           ((e.type === 3 ? 2.7 : 4) + (this.difficulty === 'relaxed' ? 1 : 0)) *
           (this.difficulty === 'hard' ? 0.7 : 1);
@@ -1074,6 +1209,10 @@ export class Game implements GameState {
       (!this.cooperation?.puzzle || this.cooperation.puzzle.solved)
     ) {
       this.status = 'won';
+      if (this.cooperation?.objective) {
+        this.cooperation.objective.state = 'complete';
+        this.cooperation.objective.text = '任务完成';
+      }
       this.score += Math.max(0, 600 - Math.floor(this.time)) * 2;
     }
   }

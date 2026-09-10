@@ -40,7 +40,15 @@ async function setup(t, seedCoins = null, seedProfile = {}) {
       fetch(url + route, {
         method: body === undefined ? 'GET' : 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: cookie, ...extra },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body:
+          body === undefined
+            ? undefined
+            : JSON.stringify(
+                ['/api/shop', '/api/draw', '/api/tutorial'].includes(route) &&
+                  !Object.hasOwn(body, 'operationId')
+                  ? { ...body, operationId: require('node:crypto').randomUUID() }
+                  : body,
+              ),
       }),
   };
 }
@@ -322,4 +330,31 @@ test('corrupt stored profile returns 500 instead of silently replacing player pr
   } finally {
     db.close();
   }
+});
+
+test('HTTP draw retries with one operation ID return the same reward and debit once', async (t) => {
+  const a = await setup(t, 0, { tickets: 3 }),
+    login = await a.request('/api/login', { username: 'shop_pilot', password: 'password123' }),
+    cookie = login.headers.get('set-cookie');
+  const responses = await Promise.all([
+    a.request('/api/draw', { operationId: 'http-draw-retry' }, cookie),
+    a.request('/api/draw', { operationId: 'http-draw-retry' }, cookie),
+  ]);
+  assert.deepEqual(
+    responses.map((r) => r.status),
+    [200, 200],
+  );
+  const [first, second] = await Promise.all(responses.map((r) => r.json()));
+  assert.deepEqual(second.reward, first.reward);
+  assert.equal(first.profile.tickets, 2);
+  assert.equal(second.profile.tickets, 2);
+  assert.equal(second.user.revision, first.user.revision);
+  assert.equal(second.profile.drawHistory.length, 1);
+  assert.equal((await a.request('/api/draw', { operationId: null }, cookie)).status, 400);
+  assert.equal(
+    (await a.request('/api/shop', { itemId: 'pulse-coil', operationId: 'http-draw-retry' }, cookie))
+      .status,
+    400,
+  );
+  assert.equal(readUser(a.file, 'shop_pilot').profile.tickets, 2);
 });

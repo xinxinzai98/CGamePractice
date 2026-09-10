@@ -1,5 +1,6 @@
 import type { GameState, Player } from '@dawn/simulation';
 import { SkillIcon, type IconKind } from './SkillIcon';
+import type { SaveStatus } from '../services/save-task';
 const names = { Asuka: '明日香', Rei: '绫波丽' };
 export function BattleHud({
   state,
@@ -9,6 +10,9 @@ export function BattleHud({
   onPause,
   onReset,
   tutorial,
+  tutorialSync,
+  signedIn,
+  onRetryTutorial,
 }: {
   state: GameState;
   index: number;
@@ -17,6 +21,9 @@ export function BattleHud({
   onPause: () => void;
   onReset: () => void;
   tutorial: boolean;
+  tutorialSync: { status: SaveStatus; error: string };
+  signedIn: boolean;
+  onRetryTutorial: () => void;
 }) {
   const p = state.players[index];
   if (!p) return null;
@@ -112,6 +119,22 @@ export function BattleHud({
           </p>
           {step === 0 && <small>移动距离 {Math.min(80, Math.floor(p.stats.moved))} / 80</small>}
           {step === 1 && <small>射击次数 {Math.min(3, p.stats.shots)} / 3</small>}
+          {step < 0 && (
+            <div role="status">
+              {!signedIn ? (
+                <small>本次为访客练习，登录档案后可保存训练奖励。</small>
+              ) : tutorialSync.status === 'saved' ? (
+                <small>训练完成与奖励已保存。</small>
+              ) : tutorialSync.status === 'failed' ? (
+                <>
+                  <p>存档未完成：{tutorialSync.error}</p>
+                  <button onClick={onRetryTutorial}>重试保存训练</button>
+                </>
+              ) : (
+                <small>正在保存训练结果…</small>
+              )}
+            </div>
+          )}
         </aside>
       )}
       <footer className="battle-hud">

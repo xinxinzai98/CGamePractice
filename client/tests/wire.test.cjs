@@ -74,11 +74,36 @@ test('typed room client parses real server lobby, Boss start and pause without f
       });
     return { room, wait, messages };
   }
+  async function account(username) {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password: 'password123' }),
+    });
+    assert.equal(response.status, 200);
+    return response.headers.get('set-cookie');
+  }
+  const hostCookie = await account('wire_host'),
+    guestCookie = await account('wire_guest');
+  const profiles = require('../../server/profiles.cjs').createProfiles(
+    path.join(folder, 'profiles.sqlite'),
+  );
+  profiles.mutate(profiles.byName('wire_host'), (p) => {
+    p.unlocked = 3;
+  });
+  profiles.close();
+  let cookie = hostCookie;
+  globalThis.WebSocket = class extends WebSocket {
+    constructor(url) {
+      super(url, { headers: { Cookie: cookie } });
+    }
+  };
   const host = client({ type: 'create' });
   const [code, hostSlot] = await host.wait('joined');
   assert.equal(hostSlot, 0);
   host.room.send({ type: 'configure', mission: 0, stage: 2, difficulty: 'normal' });
   await host.wait('lobby', ([l]) => l.stage === 2);
+  cookie = guestCookie;
   const guest = client({ type: 'join', code });
   const [, guestSlot] = await guest.wait('joined');
   assert.equal(guestSlot, 1);
@@ -90,6 +115,27 @@ test('typed room client parses real server lobby, Boss start and pause without f
   const [state] = await host.wait('state');
   assert(state.enemies.some((e) => e.boss));
   assert.equal(state.cooperation.pads.length, 2);
+  await t.test(
+    'short fire followed immediately by release fires exactly one authoritative shot',
+    async () => {
+      const game = server.rooms.get(code).game;
+      const shoot = game.shoot.bind(game);
+      let shots = 0;
+      game.shoot = (actor, ...args) => {
+        if (actor.id === 'p0') shots++;
+        return shoot(actor, ...args);
+      };
+      const startTime = game.time;
+      host.room.input({ fire: true });
+      host.room.input({});
+      // Repeating the held release retransmits the same unacknowledged command.
+      host.room.input({});
+      await host.wait('state', ([snapshot]) => snapshot.time >= startTime + 0.8);
+      assert.equal(shots, 1);
+      assert.equal(server.rooms.get(code).slots[0].commandAck, 1);
+      game.shoot = shoot;
+    },
+  );
   host.room.send({ type: 'pause', paused: true });
   const [[a], [b]] = await Promise.all([
     host.wait('state', (args) => args[1] === true),

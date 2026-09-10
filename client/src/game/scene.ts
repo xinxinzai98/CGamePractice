@@ -1,5 +1,12 @@
 import Phaser from 'phaser';
-import type { Actor, Effect, InputState, Player } from '@dawn/simulation';
+import {
+  BOSSES,
+  type Actor,
+  type Effect,
+  type Enemy,
+  type InputState,
+  type Player,
+} from '@dawn/simulation';
 import type { Session } from './index';
 const TILE = 60;
 interface ActorVisual {
@@ -14,6 +21,7 @@ export class BattleScene extends Phaser.Scene {
   private overlay!: Phaser.GameObjects.Graphics;
   private hud!: Phaser.GameObjects.Graphics;
   private bossLabel!: Phaser.GameObjects.Text;
+  private objectiveLabel!: Phaser.GameObjects.Text;
   private padLabels: Phaser.GameObjects.Text[] = [];
   private version = -1;
   private lastSnapshot = 0;
@@ -34,6 +42,17 @@ export class BattleScene extends Phaser.Scene {
     this.bossLabel = this.add
       .text(800, 18, '', { fontFamily: 'sans-serif', fontSize: '20px', color: '#f6ddd5' })
       .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(101);
+    this.objectiveLabel = this.add
+      .text(24, 18, '', {
+        fontFamily: 'sans-serif',
+        fontSize: '17px',
+        color: '#a8e5dd',
+        backgroundColor: '#101b24',
+        padding: { x: 9, y: 6 },
+        wordWrap: { width: 400 },
+      })
       .setScrollFactor(0)
       .setDepth(101);
     const names: Record<string, string> = {
@@ -176,6 +195,9 @@ export class BattleScene extends Phaser.Scene {
     cam.centerOn((map.width * TILE) / 2, (map.height * TILE) / 2);
     this.hud.setScale(1 / z).setPosition((800 * (z - 1)) / z, (345 * (z - 1)) / z);
     this.bossLabel.setScale(1 / z).setPosition(800, (18 - 345 * (1 - z)) / z);
+    this.objectiveLabel
+      .setScale(1 / z)
+      .setPosition((24 - 800 * (1 - z)) / z, (18 - 345 * (1 - z)) / z);
     this.version = this.session.version;
   }
   private texture(actor: Actor) {
@@ -196,7 +218,7 @@ export class BattleScene extends Phaser.Scene {
             ? 'enemy-artillery'
             : 'enemy-stalker';
   }
-  private renderActor(actor: Actor, delta: number) {
+  private renderActor(actor: Player | Enemy, delta: number) {
     const key = this.texture(actor);
     let visual = this.actors.get(actor.id);
     if (!visual) {
@@ -273,10 +295,10 @@ export class BattleScene extends Phaser.Scene {
       .fillRect(sprite.x - 22, sprite.y + 31, (44 * actor.hp) / actor.maxHp, 4);
     if ((p.shield || 0) > 0)
       this.overlay.lineStyle(2, 0x91e8ff, 0.8).strokeCircle(sprite.x, sprite.y, 36);
-    if (actor.boss) {
+    if (actor.team === 0 && actor.boss) {
       const c = this.session.state?.cooperation;
-      if (c && !c.puzzle && c.openFor <= 0)
-        this.overlay.lineStyle(4, 0xa1cbff, 0.8).strokeCircle(sprite.x, sprite.y, 76);
+      const shielded = actor.encounter ? actor.encounter.shielded : !!c && c.openFor <= 0;
+      if (shielded) this.overlay.lineStyle(4, 0xa1cbff, 0.8).strokeCircle(sprite.x, sprite.y, 76);
     }
   }
   private effects() {
@@ -331,7 +353,23 @@ export class BattleScene extends Phaser.Scene {
   private cooperation() {
     const c = this.session.state?.cooperation;
     if (!c) return;
-    const pads = c.puzzle ? [c.puzzle.redPad, c.puzzle.bluePad] : c.pads;
+    const puzzle = c.puzzle && !c.puzzle.solved ? c.puzzle : null;
+    const pads = puzzle ? [puzzle.redPad, puzzle.bluePad] : c.pads;
+    for (const gate of c.gates ?? []) {
+      const x = gate.x * TILE,
+        y = gate.y * TILE;
+      this.overlay
+        .lineStyle(2, gate.open ? 0x8ae8ce : 0xffb76f, gate.open ? 0.35 : 0.95)
+        .strokeRect(x + 3, y + 3, TILE - 6, TILE - 6);
+      if (!gate.open) {
+        this.overlay.fillStyle(0xc46e42, 0.55).fillRect(x + 6, y + 6, TILE - 12, TILE - 12);
+        for (let offset = 12; offset < TILE - 5; offset += 12)
+          this.overlay
+            .lineStyle(3, 0xffd196, 0.9)
+            .lineBetween(x + offset, y + 7, x + offset, y + TILE - 7);
+      }
+    }
+    this.padLabels.forEach((label, index) => label.setVisible(index < pads.length));
     pads.forEach((p, i) => {
       const color = i === 0 ? 0xff9077 : 0x8adcff;
       this.overlay
@@ -339,7 +377,7 @@ export class BattleScene extends Phaser.Scene {
         .fillCircle(p.x, p.y, 28)
         .lineStyle(3, color, 0.8)
         .strokeCircle(p.x, p.y, 28);
-      const charge = c.puzzle ? c.puzzle.charge : c.openFor > 0 ? 1 : c.charge / c.required;
+      const charge = puzzle ? puzzle.charge : c.openFor > 0 ? 1 : c.charge / c.required;
       this.overlay
         .lineStyle(5, 0xffe7a2, 1)
         .beginPath()
@@ -356,18 +394,31 @@ export class BattleScene extends Phaser.Scene {
           })
           .setOrigin(0.5)
           .setDepth(30);
-      this.padLabels[i].setText(
-        c.puzzle
-          ? c.puzzle.solved
-            ? '同步完成'
-            : i === 0
-              ? '明日香 · 持续供能'
-              : '绫波丽 · 同步激活'
-          : c.openFor > 0
-            ? '屏障解除'
-            : '同步站位 ' + (i + 1),
-      );
+      this.padLabels[i]
+        .setPosition(p.x, p.y + 45)
+        .setText(
+          puzzle
+            ? i === 0
+              ? '赤相节点 · 持续供能'
+              : '蓝相节点 · 同步激活'
+            : c.openFor > 0
+              ? '屏障解除'
+              : '同步站位 ' + (i + 1),
+        );
     });
+  }
+  private telegraph(enemy: Enemy) {
+    const warning = enemy.encounter!.telegraph!;
+    const { x, y, radius, angles, width, remaining, duration } = warning;
+    const strength = 0.12 + (1 - remaining / duration) * 0.2;
+    // The simulation supplies locked trajectories so the warning matches every projectile.
+    for (const angle of angles) {
+      const endX = x + Math.cos(angle) * radius;
+      const endY = y + Math.sin(angle) * radius;
+      this.overlay.lineStyle(width + 12, 0xff795b, strength).lineBetween(x, y, endX, endY);
+      this.overlay.lineStyle(2, 0xffd5aa, 0.9).lineBetween(x, y, endX, endY);
+    }
+    this.overlay.lineStyle(2, 0xffd5aa, 0.9).strokeCircle(x, y, 32);
   }
   update(time: number, delta: number) {
     const s = this.session;
@@ -387,9 +438,10 @@ export class BattleScene extends Phaser.Scene {
     const consume = !!s.simulation || time - this.lastInput >= 40;
     const input = consume ? { ...this.readInput(), ...s.input } : {};
     if (consume) s.input = {};
-    if (s.simulation && !s.paused && !s.blurred)
+    if (s.simulation && !s.paused && !s.blurred) {
       s.simulation.step(Math.min(delta / 1000, 0.05), [input]);
-    else if (!s.simulation && time - this.lastInput >= 40) {
+      if (s.simulation.events.length) s.callbacks.onEvents?.(s.simulation.events);
+    } else if (!s.simulation && time - this.lastInput >= 40) {
       s.callbacks.onInput?.(input);
       this.lastInput = time;
     }
@@ -427,7 +479,9 @@ export class BattleScene extends Phaser.Scene {
         .lineBetween(b.x - b.dx * 15, b.y - b.dy * 15, b.x, b.y);
     }
     for (const e of s.state.enemies)
-      if (e.warning > 0 && e.hp > 0) {
+      if (e.hp > 0 && e.encounter?.telegraph) {
+        this.telegraph(e);
+      } else if (e.warning > 0 && e.hp > 0) {
         const a = (e.dir * Math.PI) / 2 - Math.PI / 2;
         this.overlay
           .lineStyle(e.boss ? 16 : 10, 0xff8260, 0.24)
@@ -435,11 +489,18 @@ export class BattleScene extends Phaser.Scene {
         this.overlay.lineStyle(2, 0xffb49c, 0.9).strokeCircle(e.x, e.y, e.boss ? 85 : 45);
       }
     this.cooperation();
+    const objective = s.state.cooperation?.objective;
+    this.objectiveLabel
+      .setVisible(!!objective)
+      .setText(objective ? `${objective.state === 'complete' ? '✓ ' : ''}${objective.text}` : '');
     this.effects();
     const boss = s.state.enemies.find((e) => e.boss && e.hp > 0);
     this.bossLabel.setVisible(!!boss);
     if (boss) {
-      this.bossLabel.setText(`异相核心  ·  ${Math.ceil(boss.hp)} / ${boss.maxHp}`);
+      const title = boss.encounter
+        ? `${BOSSES[boss.encounter.id].name} / ${boss.encounter.phaseName}`
+        : '异相核心';
+      this.bossLabel.setText(`${title}  ·  ${Math.ceil(boss.hp)} / ${boss.maxHp}`);
       this.hud
         .fillStyle(0x141720, 0.95)
         .fillRoundedRect(490, 47, 620, 12, 6)

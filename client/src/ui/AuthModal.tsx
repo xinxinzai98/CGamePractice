@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from 'react';
-import type { ApiResponse } from '../services/api';
-import { request } from '../services/api';
+import type { ApiClient } from '../services/api';
 export function AuthModal({
   onSuccess,
+  onApi,
   onClose,
   onPractice,
 }: {
-  onSuccess: (result: ApiResponse) => void;
+  onSuccess: () => void;
+  onApi: ApiClient;
   onClose: () => void;
   onPractice: () => void;
 }) {
@@ -20,7 +21,8 @@ export function AuthModal({
     setBusy(true);
     setError('');
     try {
-      onSuccess(await request(register ? 'register' : 'login', { username, password }));
+      await onApi(register ? 'register' : 'login', { username, password });
+      onSuccess();
     } catch (e) {
       setError(e instanceof Error ? e.message : '登录失败');
     } finally {

@@ -7,3 +7,6 @@ NewTank
 Chartlet
 work
 outputs
+**/*.sqlite
+**/*.sqlite-wal
+**/*.sqlite-shm

@@ -9,6 +9,35 @@ export interface Point {
 export interface MapEnemy extends Point {
   type: number;
   boss?: boolean;
+  encounterId?: BossId;
+}
+export type BossId = 'dawn-prism' | 'river-choir' | 'void-weaver' | 'last-seraph';
+export type AttackPattern = 'fan' | 'cross' | 'ring' | 'beam';
+export interface GateDefinition extends Point {
+  id: string;
+}
+export interface GateState extends GateDefinition {
+  open: boolean;
+}
+export interface BossTelegraph extends Point {
+  id: string;
+  pattern: AttackPattern;
+  dir: number;
+  radius: number;
+  /** Exact projectile trajectories in radians; radius is their reach from the boss center. */
+  angles: number[];
+  width: number;
+  duration: number;
+  remaining: number;
+}
+export interface BossEncounterState {
+  id: BossId;
+  phaseId: string;
+  phaseIndex: number;
+  phaseName: string;
+  shielded: boolean;
+  attackIndex: number;
+  telegraph: BossTelegraph | null;
 }
 export interface GameMap {
   version: number;
@@ -19,8 +48,9 @@ export interface GameMap {
   tiles: number[][];
   spawns: Point[];
   enemies: MapEnemy[];
+  encounterId?: string;
   cooperation?: { pads: Point[]; label: string };
-  puzzle?: { redPad: Point; bluePad: Point };
+  puzzle?: { redPad: Point; bluePad: Point; gates?: GateDefinition[] };
 }
 export interface Loadout {
   ammo: Ammo;
@@ -117,6 +147,7 @@ export interface Enemy extends Actor {
   think: number;
   fire: number;
   boss: boolean;
+  encounter?: BossEncounterState;
 }
 export interface Projectile extends Point {
   id: string;
@@ -160,6 +191,12 @@ export interface Cooperation {
   openFor: number;
   required: number;
   label: string;
+  gates?: GateState[];
+  objective?: {
+    id: string;
+    text: string;
+    state: 'pending' | 'active' | 'complete';
+  };
   puzzle?: {
     redPad: Point;
     bluePad: Point;

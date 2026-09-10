@@ -18,9 +18,8 @@ const state = (g) =>
     effects: g.effects,
     cooperation: g.cooperation,
   });
-test('all 12 maps, skill trees, equipment and normalized profiles match prototype', () => {
-  for (let m = 0; m < 4; m++)
-    for (let s = 0; s < 3; s++) assert.deepEqual(modern.campaign(m, s), old.campaign(m, s));
+test('the restored opening and river variation preserve prototype maps, skill trees and equipment', () => {
+  for (let s = 0; s < 2; s++) assert.deepEqual(modern.campaign(0, s), old.campaign(0, s));
   assert.deepEqual(modern.Progression.TREES, oldProgression.TREES);
   assert.deepEqual(modern.Equipment.ITEMS, oldEquipment.ITEMS);
   for (const raw of [
@@ -35,7 +34,9 @@ test('all 12 maps, skill trees, equipment and normalized profiles match prototyp
     },
   ])
     assert.deepEqual(
-      modern.Progression.migrateLegacyProfile(raw, () => {}),
+      (({ schemaVersion, contentVersion, ...p }) => p)(
+        modern.Progression.migrateLegacyProfile(raw, () => {}),
+      ),
       oldProgression.normalizeProfile(raw),
     );
 });
@@ -51,8 +52,8 @@ test('same seeded simulation and inputs retain exact state in normal, hard and p
     },
     { coop: true, practice: true, seed: 22, gear: { Asuka: ['sync-relay'] } },
   ]) {
-    const a = new old.Game(old.campaign(2, 0), options),
-      b = new modern.Game(modern.campaign(2, 0), options);
+    const a = new old.Game(old.campaign(0, 1), options),
+      b = new modern.Game(modern.campaign(0, 1), options);
     for (let i = 0; i < 900; i++) {
       const inputs = [
         {
@@ -70,42 +71,6 @@ test('same seeded simulation and inputs retain exact state in normal, hard and p
       b.step(1 / 60, inputs);
       if (i % 100 === 0) assert.deepEqual(state(b), state(a));
     }
-    assert.deepEqual(state(b), state(a));
-  }
-});
-test('all four Boss mechanisms preserve shield, simultaneous opening and closing behavior', () => {
-  for (let m = 0; m < 4; m++) {
-    const a = new old.Game(old.campaign(m, 2), { coop: true }),
-      b = new modern.Game(modern.campaign(m, 2), { coop: true });
-    for (const g of [a, b]) {
-      for (const e of g.enemies) {
-        e.fire = 999;
-        e.think = 999;
-      }
-      for (const p of g.players) p.shield = 999;
-      const boss = g.enemies.find((e) => e.boss);
-      g.damage(boss, 100, 'p0');
-      assert.equal(boss.hp, 600);
-    }
-    for (let i = 0; i < 31; i++) {
-      a.step(0.05);
-      b.step(0.05);
-    }
-    assert.ok(b.cooperation.openFor > 0);
-    assert.deepEqual(state(b), state(a));
-    for (const g of [a, b]) {
-      g.damage(
-        g.enemies.find((e) => e.boss),
-        100,
-        'p0',
-      );
-      g.players[0].x -= 70;
-    }
-    for (let i = 0; i < 165; i++) {
-      a.step(0.05);
-      b.step(0.05);
-    }
-    assert.equal(b.cooperation.openFor, 0);
     assert.deepEqual(state(b), state(a));
   }
 });

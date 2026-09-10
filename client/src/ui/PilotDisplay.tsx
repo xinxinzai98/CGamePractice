@@ -24,7 +24,11 @@ function loadModule() {
     const script = document.createElement('script');
     script.src = portraitModuleUrl;
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Portrait animation module failed'));
+    script.onerror = () => {
+      modulePromise = null;
+      script.remove();
+      reject(new Error('角色动态载入失败，可重试。'));
+    };
     document.head.append(script);
   });
   return modulePromise;
@@ -38,23 +42,41 @@ export function PilotDisplay({
 }) {
   const canvas = useRef<HTMLCanvasElement>(null),
     controller = useRef<MotionController | null>(null);
+  const latestReducedMotion = useRef(reducedMotion);
+  latestReducedMotion.current = reducedMotion;
   const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const src = `/assets/pilot-${pilot.toLowerCase()}.png`;
   useEffect(() => {
     let disposed = false;
     setReady(false);
+    setFailed(false);
     const element = canvas.current;
     if (!element) return;
-    const onReady = () => setReady(true),
-      onError = () => setReady(false);
+    const onReady = () => {
+        setReady(true);
+        setFailed(false);
+      },
+      onError = () => {
+        setReady(false);
+        setFailed(true);
+      };
     element.addEventListener('portraitmotionready', onReady);
     element.addEventListener('portraitmotionerror', onError);
     void loadModule()
       .then(() => {
         if (disposed) return;
-        controller.current = window.PortraitMotion?.create(element, { src, reducedMotion }) ?? null;
+        controller.current =
+          window.PortraitMotion?.create(element, {
+            src,
+            reducedMotion: latestReducedMotion.current,
+          }) ?? null;
+        if (!controller.current) setFailed(true);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!disposed) setFailed(true);
+      });
     return () => {
       disposed = true;
       element.removeEventListener('portraitmotionready', onReady);
@@ -62,7 +84,7 @@ export function PilotDisplay({
       controller.current?.destroy();
       controller.current = null;
     };
-  }, [src]);
+  }, [src, attempt]);
   useEffect(() => controller.current?.setReducedMotion(reducedMotion), [reducedMotion]);
   return (
     <div className="pilot-display">
@@ -78,6 +100,15 @@ export function PilotDisplay({
         aria-hidden="true"
         style={{ opacity: ready ? 1 : 0 }}
       />
+      {failed && (
+        <button
+          className="text-button"
+          style={{ position: 'absolute', bottom: 72, right: 16, zIndex: 2, pointerEvents: 'auto' }}
+          onClick={() => setAttempt((value) => value + 1)}
+        >
+          重试角色动态
+        </button>
+      )}
     </div>
   );
 }
