@@ -1,0 +1,30 @@
+name: dawn-game
+
+services:
+  game:
+    build: .
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "${DAWN_BIND_ADDRESS:-127.0.0.1}:${DAWN_HTTP_PORT:-8178}:8178"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8178"
+      NODE_ENV: production
+      DAWN_PROFILES_FILE: /app/data/profiles.sqlite
+      DAWN_SECURE_COOKIES: "${DAWN_SECURE_COOKIES:-0}"
+      DAWN_TRUST_PROXY: "${DAWN_TRUST_PROXY:-}"
+    volumes:
+      - game-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  game-data:

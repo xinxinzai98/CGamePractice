@@ -1,0 +1,17 @@
+.git
+.env
+.env.*
+.playwright
+.playwright-cli
+output
+node_modules
+client/dist
+packages/simulation/dist
+data
+NewTank
+Chartlet
+work
+outputs
+**/*.sqlite
+**/*.sqlite-wal
+**/*.sqlite-shm

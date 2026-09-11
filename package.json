@@ -1,0 +1,36 @@
+{
+  "name": "battle-for-the-dawn",
+  "version": "0.3.1",
+  "private": true,
+  "description": "Web mecha co-op game with Phaser, TypeScript and persistent pilot profiles",
+  "scripts": {
+    "build:shared": "tsc -p packages/simulation/tsconfig.json",
+    "typecheck": "tsc -p client/tsconfig.json --noEmit",
+    "build:client": "vite build --config client/vite.config.ts",
+    "build": "npm run build:shared && npm run typecheck && npm run build:client",
+    "dev": "vite --config client/vite.config.ts",
+    "dev:server": "node server/server.cjs",
+    "start": "node server/server.cjs",
+    "maintain": "node server/maintenance.cjs",
+    "test": "npm run build:shared && node --experimental-strip-types --test --test-concurrency=2 web/tests/*.test.cjs packages/simulation/tests/*.test.cjs server/*.test.cjs client/tests/*.test.cjs",
+    "check": "npm run typecheck && node --check server/server.cjs && node --check server/profiles.cjs"
+  },
+  "dependencies": {
+    "ws": "8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "@vitejs/plugin-react": "6.1.1",
+    "phaser": "4.2.1",
+    "prettier": "3.9.6",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "typescript": "7.0.2",
+    "vite": "8.2.2"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Isolated asset loader fixture</title>
+  </head>
+  <body style="margin: 0; background: #080f19">
+    <div id="game" style="width: 1600px; height: 900px"></div>
+    <script type="module">
+      import { createGame } from '../src/game/index.ts';
+      const state = { ready: 0, errors: [], progress: [] };
+      const runtime = createGame(document.getElementById('game'), {
+        onReady: () => state.ready++,
+        onError: (message) => state.errors.push(message),
+        onProgress: (value, pack) => state.progress.push({ value, pack }),
+      });
+      window.assetProbe = {
+        state,
+        prepare: (pack) => runtime.prepareAssets(pack),
+        destroy: () => runtime.destroy(),
+      };
+    </script>
+  </body>
+</html>

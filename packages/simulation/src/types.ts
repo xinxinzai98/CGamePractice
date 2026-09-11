@@ -1,0 +1,368 @@
+import type { BattleEvent, BattleMode, EvaProfile, ResolvedLoadout } from './eva-types';
+export type Character = 'Asuka' | 'Rei';
+export type Ammo = 'AP' | 'HE' | 'HESH';
+export type Skill = 'heal' | 'speed' | 'special' | 'ultimate';
+export type Slot = 'weapon' | 'armor' | 'module';
+export interface Point {
+  x: number;
+  y: number;
+}
+export interface MapEnemy extends Point {
+  type: number;
+  boss?: boolean;
+  encounterId?: BossId;
+}
+export type BossId = 'dawn-prism' | 'river-choir' | 'void-weaver' | 'last-seraph';
+export type AttackPattern = 'fan' | 'cross' | 'ring' | 'beam';
+export interface GateDefinition extends Point {
+  id: string;
+}
+export interface GateState extends GateDefinition {
+  open: boolean;
+}
+export interface BossTelegraph extends Point {
+  id: string;
+  pattern: AttackPattern;
+  dir: number;
+  radius: number;
+  /** Exact projectile trajectories in radians; radius is their reach from the boss center. */
+  angles: number[];
+  width: number;
+  duration: number;
+  remaining: number;
+}
+export interface BossEncounterState {
+  id: BossId;
+  phaseId: string;
+  phaseIndex: number;
+  phaseName: string;
+  shielded: boolean;
+  attackIndex: number;
+  telegraph: BossTelegraph | null;
+}
+export interface GameMap {
+  version: number;
+  artSet: 'legacy' | 'new';
+  name: string;
+  width: number;
+  height: number;
+  tiles: number[][];
+  spawns: Point[];
+  enemies: MapEnemy[];
+  encounterId?: string;
+  cooperation?: { pads: Point[]; label: string };
+  puzzle?: { redPad: Point; bluePad: Point; gates?: GateDefinition[] };
+}
+export interface Loadout {
+  ammo: Ammo;
+  melee: 'blade' | 'spear';
+}
+export interface GearMods {
+  damageMult: number;
+  hpBonus: number;
+  speedMult: number;
+  cooldownMult: number;
+}
+export interface EffectConfig {
+  doubleShot: boolean;
+  mobileBarrage: boolean;
+  tripleBarrage: boolean;
+  pierce: number;
+  speedMultiplier: number;
+  boostShield: boolean;
+  sharedBoost: boolean;
+  extraHp: number;
+  sharedShield: boolean;
+  fortress: boolean;
+  missileRadius: number;
+  splashDamage: number;
+  chainBlast: boolean;
+  teleportExtra: number;
+  phaseShield: boolean;
+  phaseRescue: boolean;
+  healBonus: number;
+  healRadius: number;
+  fastRescue: boolean;
+  resurrection: boolean;
+}
+export interface Stats {
+  shots: number;
+  hits: number;
+  damage: number;
+  taken: number;
+  rescues: number;
+  healing: number;
+  assists: number;
+  moved: number;
+  heals: number;
+  skills: number;
+  melee: number;
+  meleeHits: number;
+  skillUses: Record<Skill, number>;
+}
+export interface Actor extends Point {
+  id: string;
+  dir: number;
+  r: number;
+  hp: number;
+  maxHp: number;
+  team: 0 | 1;
+  flash: number;
+  moving: boolean;
+  firePose: number;
+  shield?: number;
+  boss?: boolean;
+  type?: number;
+  stats?: Stats;
+  config?: EffectConfig;
+  gearMods?: GearMods;
+  armorBreakUntil?: number;
+  exposedUntil?: number;
+  slowUntil?: number;
+  lastOwner?: string;
+  lastHit?: number;
+  markOwner?: string;
+  markUntil?: number;
+}
+export interface Player extends Actor {
+  team: 1;
+  character: Character;
+  cd: Record<Skill | 'fire' | 'melee' | 'item', number>;
+  boost: number;
+  heal: number;
+  barrage: number;
+  shield: number;
+  revive: number;
+  nodes: string[];
+  config: EffectConfig;
+  stats: Stats;
+  gearMods: GearMods;
+  loadout: Loadout;
+  energy: number;
+  maxEnergy: number;
+  activeItem: boolean;
+  accountId?: string;
+  machineId?: string;
+  driverId?: string;
+  supportId?: string;
+  resolved?: ResolvedLoadout;
+  tacticalCd: number[];
+  stock: Record<string, number>;
+  used: Record<string, number>;
+  targetPart?: 'weapon' | 'generator' | 'core';
+  barrierOwner?: string;
+  barrierUntil?: number;
+  chargedUntil?: number;
+  formUntil?: number;
+  passiveCooldowns?: Record<string, number>;
+  selectedAmmoId?: string | null;
+  barrierCapacity?: number;
+  markedBy?: string;
+}
+export interface BossPartState extends Point {
+  id: 'weapon' | 'generator' | 'core';
+  r: number;
+  hp: number;
+  maxHp: number;
+  state: 'active' | 'protected' | 'disabled';
+  disabledUntil: number;
+  immuneUntil: number;
+  contributors: string[];
+}
+export interface MissionObjective {
+  kind: 'assault' | 'escort' | 'defense';
+  label: string;
+  progress: number;
+  required: number;
+  state: 'active' | 'complete' | 'failed';
+  position?: Point;
+  hp: number;
+  maxHp: number;
+}
+export interface PowerZone extends Point {
+  id: string;
+  radius: number;
+  active: boolean;
+  backup: boolean;
+  regen: number;
+}
+export interface CoopActionState {
+  id: 'crossfire' | 'barrier-cover';
+  state: 'ready' | 'primed' | 'cooldown';
+  actorId?: string;
+  targetId?: string;
+  expiresAt: number;
+  cooldownUntil: number;
+}
+export interface Enemy extends Actor {
+  team: 0;
+  type: number;
+  repair: number;
+  warning: number;
+  think: number;
+  fire: number;
+  boss: boolean;
+  encounter?: BossEncounterState;
+  parts?: BossPartState[];
+}
+export interface Projectile extends Point {
+  id: string;
+  dx: number;
+  dy: number;
+  r: number;
+  team: 0 | 1;
+  damage: number;
+  speed: number;
+  life: number;
+  missile: boolean;
+  ammo: Ammo | null;
+  owner: string;
+  pierce: number;
+  hitIds: string[];
+  boss?: boolean;
+  sourceId?: string;
+  direct?: boolean;
+  charged?: boolean;
+  coverBy?: string;
+  targetPart?: 'weapon' | 'generator' | 'core';
+}
+export interface Effect extends Point {
+  kind: string;
+  life: number;
+  max: number;
+  radius: number;
+  dir: number;
+  label?: string;
+  amount?: number;
+}
+export interface InputState {
+  dir?: number;
+  fire?: boolean;
+  heal?: boolean;
+  speed?: boolean;
+  special?: boolean;
+  ultimate?: boolean;
+  melee?: boolean;
+  item?: boolean;
+  ammo?: Ammo;
+  tactical1?: boolean;
+  tactical2?: boolean;
+  tactical3?: boolean;
+  consumable1?: boolean;
+  consumable2?: boolean;
+  targetPart?: 'weapon' | 'generator' | 'core';
+}
+export interface Cooperation {
+  pads: Point[];
+  charge: number;
+  openFor: number;
+  required: number;
+  label: string;
+  gates?: GateState[];
+  objective?: {
+    id: string;
+    text: string;
+    state: 'pending' | 'active' | 'complete';
+  };
+  puzzle?: {
+    redPad: Point;
+    bluePad: Point;
+    powered: boolean;
+    solved: boolean;
+    charge: number;
+    gates: Point[];
+  };
+}
+export interface GameState {
+  map: GameMap;
+  practice: boolean;
+  time: number;
+  status: 'playing' | 'paused' | 'won' | 'lost';
+  score: number;
+  kills: number;
+  players: Player[];
+  enemies: Enemy[];
+  bullets: Projectile[];
+  effects: Effect[];
+  events: string[];
+  cooperation: Cooperation | null;
+  battleEvents?: BattleEvent[];
+  mode?: BattleMode;
+  missionId?: string;
+  objective?: MissionObjective | null;
+  powerZones?: PowerZone[];
+  coopActions?: CoopActionState[];
+}
+export interface GameOptions {
+  coop?: boolean;
+  character?: Character;
+  seed?: number;
+  difficulty?: 'relaxed' | 'normal' | 'hard';
+  nodes?: string[] | Partial<Record<Character, string[]>>;
+  characters?: Character[];
+  practice?: boolean;
+  gear?: Partial<Record<Character, string[]>>;
+  loadouts?: Partial<Record<Character, Partial<Loadout>>>;
+  participants?: ResolvedLoadout[];
+  mode?: BattleMode;
+  missionId?: string;
+  roundId?: string;
+  condition?: string | null;
+  levelCap?: 1 | 2 | 3;
+  phaseId?: string;
+  simulatedAlly?: boolean;
+}
+export interface Profile {
+  eva?: EvaProfile;
+  characters: Record<Character, { xp: number; nodes: string[] }>;
+  tickets: number;
+  pity: number;
+  drawHistory: DrawRecord[];
+  unlocked: number;
+  records: { history: BattleRecord[]; wins: number; losses: number };
+  coins: number;
+  inventory: string[];
+  equipment: Record<Character, Record<Slot, string | null>>;
+  loadouts: Record<Character, Loadout>;
+  appearance: { pilot: Character; reducedMotion: boolean };
+  tutorialComplete: boolean;
+}
+export interface SkillNode {
+  id: string;
+  name: string;
+  description: string;
+  branch: string;
+  tier: number;
+  requires: string[];
+  level: number;
+  cost: number;
+  icon: string;
+}
+export function record(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+export interface BattleRecord {
+  round: string;
+  at: string;
+  character: Character;
+  mission: number;
+  stage: number;
+  won: boolean;
+  xp: number;
+  score: number;
+  time: number;
+  stats: Stats;
+}
+export interface DrawReward {
+  itemId: string;
+  rarity: 'standard' | 'rare';
+  duplicate: boolean;
+  coins: number;
+  pityTriggered: boolean;
+}
+export interface DrawRecord extends DrawReward {
+  at: string;
+}
