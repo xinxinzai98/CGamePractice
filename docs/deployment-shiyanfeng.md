@@ -16,6 +16,7 @@
 - 内部监听：127.0.0.1:8178；Nginx 剥离 /dawn/ 后转发，包含 WebSocket Upgrade，并把游戏 Cookie 路径限制到 /dawn/。
 - 存档：/var/lib/dawn-game/profiles.sqlite（systemd StateDirectory，真实目录 /var/lib/private/dawn-game）。目录 0700、文件 0600，更新发布目录不会替换数据。
 - Nginx 路由：/etc/nginx/snippets/dawn-game.conf，现有 shengyan-site 添加独立 include，根站点仍转发原 3000 服务。
+- 初始一致性备份：/opt/dawn-game/backups/initial-20260911T092458Z.sqlite，完整性检查 ok（含两个 QA 账号）。
 - Nginx 原配置备份：/opt/dawn-game/backups/shengyan-site.before-dawn-20260911T092458Z。
 - 内存限制：MemoryHigh 192M / MemoryMax 256M，Node heap 128M；测试期间进程没有重启。
 

@@ -1,5 +1,7 @@
 # 联网、个人存档与部署
 
+当前版本 `0.3.1` 为已部署测试版（2026-09-11），公网入口：[实验蜂《黎明之战》](http://8.130.114.41/dawn/)。运行方式与验证记录见[实验蜂部署记录](deployment-shiyanfeng.md)。
+
 ## 本地运行
 
 ```sh
@@ -39,7 +41,7 @@ node server/maintenance.cjs verify --database work/restore-drill/profiles.sqlite
 
 每次升级先备份并记录对应代码提交，再对独立恢复库运行新版本、验证登录与一场结算，成功后升级正式实例。数据库已经升级时，不要直接降级旧代码读取新库；回退应使用对应旧代码和升级前备份。尚未结算的比赛不跨服务重启继续战斗，已持久化的终局奖励会恢复处理。
 
-建议部署时每天备份并保留最近7份，另保留每次升级前的备份；至少一份复制到服务器以外。定期重复恢复演练，检查备份日期与命令退出码。仓库当前不替用户创建定时任务或执行公网备份。
+建议部署时每天备份并保留最近7份，另保留每次升级前的备份；至少一份复制到服务器以外。定期重复恢复演练，检查备份日期与命令退出码。当前未配置自动定时备份；已执行的部署备份范围见[实验蜂部署记录](deployment-shiyanfeng.md)。
 
 ## 独立测试账号与离线账号恢复
 
@@ -81,17 +83,19 @@ HOST=0.0.0.0 PORT=8178 npm start
 
 朋友访问主机局域网IP的8178端口。`127.0.0.1`仅指各自电脑，不是可分享的公网地址。网络与防火墙需允许连接。
 
-## 以后部署到服务器
+## 当前公网部署与其他部署方式
 
-当前未执行公网部署。需要支持长期运行Node.js的服务器；静态GitHub Pages不能运行房间服务。
+2026-09-11 已部署到实验蜂，使用 systemd 运行 Node.js 单实例，Nginx 将 `/dawn/` 转发至 `127.0.0.1:8178`。当前为 HTTP，尚未配置域名与 HTTPS；不要在现有 HTTP 入口直接启用 Secure Cookie。服务器使用独立玩家库，本机试玩账号未迁移。
 
-仓库提供多阶段Dockerfile和Compose配置，构建客户端和共享规则后仅运行服务器。推荐按 [Docker部署手册](docker.md) 管理同一份命名数据卷。接好HTTPS代理后启动：
+本地 250 项测试及子路径构建通过；公网认证、双客户端 WebSocket 组队、双方准备、MAGI 开局和状态广播通过。公网浏览器可视检查未完成，人工长时游玩和全部关卡验收仍待完成。
+
+游戏需要支持长期运行 Node.js 的服务器；静态 GitHub Pages 不能运行房间服务。仓库另外提供多阶段 Dockerfile 和 Compose 配置，属于可选部署方式，并非当前实验蜂运行方式。使用 Docker 时按 [Docker 部署手册](docker.md) 管理同一份命名数据卷。接好 HTTPS 代理后启动：
 
 ```sh
 DAWN_SECURE_COOKIES=1 docker compose up -d --build --wait
 ```
 
-公网入口使用HTTPS反向代理，页面自动使用wss；`DAWN_SECURE_COOKIES=1`开启Secure登录Cookie，此时必须从HTTPS入口访问。直接本地HTTP测试时不设置该变量。Docker镜像内置`GET /ready`健康检查：`/health`只证明进程存活，`/ready`还检查客户端构建和数据库是否可读，失败返回503。
+配置 HTTPS 反向代理后，页面自动使用 wss；`DAWN_SECURE_COOKIES=1`开启Secure登录Cookie，此时必须从HTTPS入口访问。直接本地HTTP测试时不设置该变量。Docker镜像内置`GET /ready`健康检查：`/health`只证明进程存活，`/ready`还检查客户端构建和数据库是否可读，失败返回503。
 
 代理应保留Host与WebSocket Upgrade，并**覆盖**`X-Forwarded-For`为直接客户端地址，不接受浏览器自己声明的转发链：
 
