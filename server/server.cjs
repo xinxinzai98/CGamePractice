@@ -7,6 +7,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 const D = require('../packages/simulation/dist/index.js');
 const { createProfiles } = require('./profiles.cjs');
 const { RequestError } = require('./errors.cjs');
+const { createEvaRooms } = require('./eva-room.cjs');
 const CLIENT = path.resolve(__dirname, '../client/dist');
 const send = (ws, data) => {
   if (ws?.readyState === WebSocket.OPEN && ws.bufferedAmount < 262144)
@@ -22,6 +23,7 @@ function createServer({
     .map((ip) => ip.trim())
     .filter(Boolean),
   profilesFactory = createProfiles,
+  allowLegacyClients = false,
   profilesFile = process.env.DAWN_PROFILES_FILE ||
     path.resolve(__dirname, '../data/profiles.sqlite'),
   webRoot = process.env.DAWN_CLIENT_DIR || CLIENT,
@@ -33,10 +35,20 @@ function createServer({
     attempts = new Map();
   const equipment = () => D.Equipment;
   const progression = () => D.Progression;
+  const evaRooms = createEvaRooms(D, profiles);
+  const pendingEvaResults = new Map();
+  const pendingEvaAborts = new Set();
   const publicUser = (u) =>
     u
       ? { user: { username: u.username, revision: u.revision }, profile: u.profile }
       : { user: null };
+  const publicEva = (u, result) => ({
+    user: u ? { username: u.username, revision: u.revision } : null,
+    profile: u ? u.profile.eva : D.Eva.createProfile(),
+    protocolVersion: 3,
+    ruleVersion: D.Eva.RULE_VERSION,
+    ...(result === undefined ? {} : { result }),
+  });
   const json = (res, status, body) => {
     res.writeHead(status, {
       'Content-Type': 'application/json',
@@ -55,7 +67,7 @@ function createServer({
         if (req.url === '/api/rooms' && req.method === 'GET')
           return json(res, 200, {
             rooms: [...rooms.values()]
-              .filter((r) => !r.game && r.slots[0]?.ws && r.slots[1] === null)
+              .filter((r) => !r.solo && !r.game && r.slots[0]?.ws && r.slots[1] === null)
               .slice(0, 30)
               .map((r) => ({
                 code: r.code,
@@ -63,6 +75,9 @@ function createServer({
                 stage: r.stage,
                 difficulty: r.difficulty,
                 playersCount: r.slots.filter((s) => s?.ws).length,
+                ...(r.protocolVersion === 3
+                  ? { protocolVersion: 3, mode: r.mode, missionId: r.missionId }
+                  : {}),
               })),
           });
         if (req.url === '/api/room' && req.method === 'GET') {
@@ -75,6 +90,19 @@ function createServer({
         }
         if (req.url === '/api/me' && req.method === 'GET')
           return json(res, 200, publicUser(profiles.get(req)));
+        if (req.method === 'GET' && req.url.startsWith('/api/eva')) {
+          const url = new URL(req.url, 'http://local');
+          const user = profiles.get(req);
+          if (url.pathname === '/api/eva') return json(res, 200, publicEva(user));
+          if (!user) return json(res, 401, { error: '请先登录' });
+          if (url.pathname === '/api/eva/review')
+            return json(res, 200, {
+              result: profiles.evaReview(user, url.searchParams.get('round')),
+            });
+          if (url.pathname === '/api/eva/ledger')
+            return json(res, 200, { operations: profiles.evaOperations(user) });
+          return json(res, 404, { error: '接口不存在' });
+        }
         if (req.method !== 'POST') return json(res, 405, { error: '请求方法不支持' });
         if (!String(req.headers['content-type'] || '').startsWith('application/json'))
           return json(res, 415, { error: '需要 JSON 请求' });
@@ -135,11 +163,45 @@ function createServer({
         }
         const user = profiles.get(req);
         if (!user) return json(res, 401, { error: '请先登录' });
+        if (req.url.startsWith('/api/eva/')) {
+          const action = req.url.slice('/api/eva/'.length);
+          if (
+            ![
+              'research',
+              'upgrade',
+              'preset',
+              'purchase',
+              'draw',
+              'exchange',
+              'repair',
+              'settings',
+              'redeem',
+            ].includes(action)
+          )
+            return json(res, 404, { error: '接口不存在' });
+          const { operationId, revision, ...payload } = body;
+          const result = profiles.evaAction(user, action, payload, operationId);
+          if (['research', 'upgrade', 'preset', 'repair'].includes(action))
+            invalidateReady(user.username);
+          return json(res, 200, publicEva(user, result));
+        }
         if (req.url === '/api/password') {
           await profiles.changePassword(user, body.currentPassword, body.newPassword, res);
           revokeInvalidConnections();
           return json(res, 200, publicUser(user));
         }
+        if (
+          !allowLegacyClients &&
+          [
+            '/api/build',
+            '/api/shop',
+            '/api/equip',
+            '/api/loadout',
+            '/api/draw',
+            '/api/tutorial',
+          ].includes(req.url)
+        )
+          return json(res, 409, { error: '客户端已更新至 EVA v3.1，请刷新页面后使用新版机库' });
         if (req.url === '/api/build') {
           profiles.mutate(user, (p) => {
             if (!['Asuka', 'Rei'].includes(body.character)) throw new RequestError('角色无效');
@@ -322,6 +384,7 @@ function createServer({
     const seat = accountSeat(username);
     if (!seat || seat.room.game) return;
     seat.slot.ready = false;
+    if (seat.room.protocolVersion === 3) seat.slot.resolved = null;
     lobby(seat.room);
   }
   function revokeInvalidConnections() {
@@ -334,7 +397,8 @@ function createServer({
       }
     }
   }
-  function loadBuild(slot) {
+  function loadBuild(slot, room) {
+    if (room?.protocolVersion === 3) return evaRooms.build(room, slot, room.slots.indexOf(slot));
     const user = profiles.byName(slot.username);
     if (!user) throw Error('Room account does not exist');
     const character = slot.character;
@@ -364,6 +428,32 @@ function createServer({
   function broadcast(room, data) {
     for (const s of room.slots) send(s?.ws, data);
   }
+  function evaSeat(room, slot) {
+    const profile = profiles.byName(slot.username).profile.eva;
+    const preset =
+      room.mode === 'recovery'
+        ? D.Eva.defaultPreset()
+        : slot.trialPreset ||
+          profile.presets.find((p) => p.id === (slot.presetId || profile.activePresetId));
+    const resolved = slot.resolved;
+    return {
+      presetId: preset?.id,
+      machineId: resolved?.machineId || preset?.machineId,
+      driverId: resolved?.driverId || preset?.driverId,
+      supportId: resolved?.supportId || preset?.supportId,
+      effectiveLevel:
+        resolved?.level ||
+        Math.min(
+          room.mode === 'recovery'
+            ? 1
+            : room.mode === 'magi'
+              ? 3
+              : profile.machines[preset?.machineId]?.level || 1,
+          evaRooms.mission(room.missionId).levelCap,
+          preset?.levelCap || 3,
+        ),
+    };
+  }
   function lobby(room) {
     broadcast(room, {
       type: 'lobby',
@@ -373,6 +463,9 @@ function createServer({
       difficulty: room.difficulty,
       unlocked: profiles.byName(room.slots[0].username).profile.unlocked,
       custom: room.custom,
+      ...(room.protocolVersion === 3
+        ? { protocolVersion: 3, mode: room.mode, missionId: room.missionId, solo: room.solo }
+        : {}),
       map: room.map.name,
       slots: room.slots.map((s) =>
         s
@@ -381,6 +474,11 @@ function createServer({
               ready: s.ready,
               character: s.character,
               username: s.username || null,
+              ...(room.protocolVersion === 3
+                ? {
+                    ...evaSeat(room, s),
+                  }
+                : {}),
             }
           : null,
       ),
@@ -393,7 +491,7 @@ function createServer({
       round: room.round,
       rewardsSaved: !!room.awarded,
       paused: !!room.paused,
-      waiting: room.slots.some((s) => !s?.ws),
+      waiting: (room.solo ? room.slots.slice(0, 1) : room.slots).some((s) => !s?.ws),
       state: {
         time: g.time,
         status: room.paused ? 'paused' : g.status,
@@ -407,12 +505,22 @@ function createServer({
         cooperation: g.cooperation,
         difficulty: g.difficulty,
         coop: true,
+        ...(room.protocolVersion === 3
+          ? {
+              mode: g.mode,
+              missionId: room.missionId,
+              battleEvents: (g.battleEvents || []).slice(-100),
+              objective: g.objective,
+              powerZones: g.powerZones,
+              coopActions: g.coopActions,
+            }
+          : {}),
       },
     };
   }
   function start(room) {
-    room.slots.forEach(loadBuild);
-    for (const slot of room.slots) {
+    for (const slot of room.slots.filter(Boolean)) loadBuild(slot, room);
+    for (const slot of room.slots.filter(Boolean)) {
       slot.input = {};
       slot.commands = [];
       slot.commandAck = 0;
@@ -421,6 +529,77 @@ function createServer({
     }
     room.events = [];
     room.eventSeq = 0;
+    if (room.protocolVersion === 3) {
+      const previous = {
+        round: room.round,
+        seed: room.seed,
+        startedAt: room.startedAt,
+        participants: room.participants,
+        licenseStates: room.licenseStates,
+      };
+      room.round = crypto.randomBytes(8).toString('hex');
+      room.seed =
+        room.mode === 'magi' && room.fixedSeed !== undefined
+          ? room.fixedSeed
+          : crypto.randomBytes(4).readUInt32LE();
+      room.startedAt = Date.now();
+      room.participants = room.slots.filter(Boolean).map((s) => structuredClone(s.resolved));
+      const definition = evaRooms.mission(room.missionId);
+      let begun;
+      try {
+        begun = profiles.evaBeginRound({
+          round: room.round,
+          mode: room.mode,
+          missionId: room.missionId,
+          seed: room.seed,
+          condition: definition.condition,
+          difficulty: room.difficulty,
+          participants: room.participants,
+          at: room.startedAt,
+        });
+      } catch (error) {
+        Object.assign(room, previous);
+        for (const slot of room.slots.filter(Boolean)) slot.ready = false;
+        lobby(room);
+        throw error;
+      }
+      room.licenseStates = begun.participants;
+      room.participants = begun.participants.map((p) => p.resolved);
+      try {
+        room.game = new D.Game(room.map, {
+          coop: room.participants.length > 1,
+          participants: room.participants,
+          mode: room.mode,
+          missionId: room.missionId,
+          roundId: room.round,
+          condition: definition.condition,
+          levelCap: definition.levelCap,
+          difficulty: room.difficulty,
+          seed: room.seed,
+          simulatedAlly: room.solo && room.mode === 'magi',
+        });
+      } catch (error) {
+        try {
+          profiles.evaAbortRound(room.round);
+        } catch {
+          pendingEvaAborts.add(room.round);
+        }
+        Object.assign(room, previous);
+        for (const slot of room.slots.filter(Boolean)) slot.ready = false;
+        lobby(room);
+        throw error;
+      }
+      room.checkpointAt = 0;
+      room.checkpointUsage = '';
+      room.paused = false;
+      room.awarded = false;
+      room.rewardRecorded = false;
+      room.rewardRetryAt = 0;
+      room.rewardError = false;
+      broadcast(room, startMessage(room));
+      broadcast(room, snapshot(room));
+      return;
+    }
     const builds = Object.fromEntries(room.slots.map((s) => [s.character, s.nodes]));
     room.game = new D.Game(room.map, {
       coop: true,
@@ -464,7 +643,33 @@ function createServer({
       })),
     };
   }
+  function startMessage(room) {
+    return {
+      type: 'start',
+      map: room.map,
+      mission: room.mission,
+      stage: room.stage,
+      difficulty: room.difficulty,
+      custom: room.custom,
+      round: room.round,
+      characters: room.slots.filter(Boolean).map((s) => s.character),
+      ...(room.protocolVersion === 3
+        ? {
+            protocolVersion: 3,
+            participants: room.participants,
+            mode: room.mode,
+            missionId: room.missionId,
+            solo: room.solo,
+          }
+        : {}),
+    };
+  }
   function retainResult(room) {
+    if (room.protocolVersion === 3) {
+      if (room.game && !room.awarded && ['won', 'lost'].includes(room.game.status))
+        pendingEvaResults.set(room.round, evaRooms.records(room));
+      return;
+    }
     if (
       !room.custom &&
       room.game &&
@@ -476,6 +681,20 @@ function createServer({
   }
   function destroy(room, reason) {
     retainResult(room);
+    if (
+      room.protocolVersion === 3 &&
+      room.game &&
+      !room.awarded &&
+      room.game.status === 'playing'
+    ) {
+      try {
+        profiles.evaCheckpoint(room.round, evaRooms.records(room));
+        profiles.evaAbortRound(room.round);
+      } catch (error) {
+        pendingEvaAborts.add(room.round);
+        console.error('Interrupted round will retry recovery:', room.round, error.message);
+      }
+    }
     broadcast(room, { type: 'ended', message: reason });
     for (const s of room.slots)
       if (s?.ws) {
@@ -500,17 +719,12 @@ function createServer({
     send(ws, { type: 'joined', code: room.code, slot, token: s.token, commandSeq: s.commandSeq });
     lobby(room);
     if (room.game) {
-      send(ws, {
-        type: 'start',
-        map: room.map,
-        mission: room.mission,
-        stage: room.stage,
-        difficulty: room.difficulty,
-        custom: room.custom,
-        round: room.round,
-        characters: room.slots.map((s) => s.character),
-      });
-      if (room.slots.every((s) => s?.ws) && room.paused === 'disconnect') room.paused = false;
+      send(ws, startMessage(room));
+      if (
+        (room.solo ? room.slots.slice(0, 1) : room.slots).every((s) => s?.ws) &&
+        room.paused === 'disconnect'
+      )
+        room.paused = false;
       broadcast(room, snapshot(room));
     }
   }
@@ -518,6 +732,7 @@ function createServer({
     return {
       username: ws.username,
       character,
+      presetId: profiles.byName(ws.username).profile.eva?.activePresetId,
       nodes: [],
       ws: null,
       ready: false,
@@ -570,6 +785,8 @@ function createServer({
           return;
         }
         if (m.type === 'create') {
+          if (m.protocolVersion !== 3 && !allowLegacyClients)
+            throw new RequestError('房间协议已更新，请刷新至 EVA v3.1');
           if (room || accountSeat(ws.username))
             throw new RequestError('账号已经在房间中，请恢复原房间或先退出');
           if (rooms.size >= maxRooms) throw new RequestError('当前房间已满，请稍后再试');
@@ -577,16 +794,60 @@ function createServer({
           do {
             code = crypto.randomBytes(3).toString('hex').toUpperCase();
           } while (rooms.has(code));
-          const mission = 0,
-            custom = !!m.map,
-            map = custom ? D.validateMap(m.map) : D.campaign(mission);
+          const modern = m.protocolVersion === 3;
+          const mode = m.mode || 'operation';
+          if (modern && !['operation', 'magi', 'recovery'].includes(mode))
+            throw new RequestError('作战模式无效');
+          if (modern && m.map) throw new RequestError('新版房间必须选择已发布的任务');
+          if (modern && m.solo && mode === 'operation')
+            throw new RequestError('正式合作任务需要两名玩家');
+          if (
+            modern &&
+            m.difficulty !== undefined &&
+            !['relaxed', 'normal', 'hard'].includes(m.difficulty)
+          )
+            throw new RequestError('任务难度无效');
+          if (
+            modern &&
+            m.seed !== undefined &&
+            (!Number.isSafeInteger(m.seed) || m.seed < 0 || m.seed > 0xffffffff)
+          )
+            throw new RequestError('演习种子无效');
+          const missionId = modern
+            ? m.missionId ||
+              (mode === 'recovery'
+                ? D.Eva.MISSIONS.find((x) => x.id.includes('recovery'))?.id
+                : 'mission.campaign.1')
+            : null;
+          const mission = modern ? Math.floor(evaRooms.mission(missionId).campaignIndex / 3) : 0,
+            custom = !modern && !!m.map,
+            map = modern
+              ? evaRooms.mapFor(missionId)
+              : custom
+                ? D.validateMap(m.map)
+                : D.campaign(mission);
+          if (modern && (mode === 'recovery') !== missionId.includes('recovery'))
+            throw new RequestError('后勤整备试验使用独立任务');
+          if (
+            modern &&
+            mode === 'operation' &&
+            missionId.startsWith('mission.campaign.') &&
+            evaRooms.mission(missionId).campaignIndex + 1 >
+              profiles.byName(ws.username).profile.unlocked
+          )
+            throw new RequestError('房主尚未解锁此关卡');
           room = {
             code,
             mission,
-            stage: 0,
+            stage: modern ? evaRooms.mission(missionId).campaignIndex % 3 : 0,
             custom,
             map,
-            difficulty: 'normal',
+            difficulty: modern ? m.difficulty || 'normal' : 'normal',
+            fixedSeed: modern && mode === 'magi' ? m.seed : undefined,
+            protocolVersion: modern ? 3 : 1,
+            mode: modern ? mode : undefined,
+            missionId,
+            solo: modern && !!m.solo,
             slots: [newSlot(ws, 'Asuka'), null],
             game: null,
             created: now,
@@ -595,6 +856,10 @@ function createServer({
             events: [],
             eventSeq: 0,
           };
+          if (modern && mode === 'magi' && m.preset) {
+            room.slots[0].trialPreset = structuredClone(m.preset);
+            loadBuild(room.slots[0], room);
+          }
           rooms.set(code, room);
           attach(ws, room, 0);
           return;
@@ -605,6 +870,9 @@ function createServer({
           const code = String(m.code || '').toUpperCase();
           room = rooms.get(code);
           if (!room) throw new RequestError('房间不存在或已关闭');
+          if ((room.protocolVersion === 3) !== (m.protocolVersion === 3))
+            throw new RequestError('客户端与房间版本不一致，请刷新页面');
+          if (room.solo) throw new RequestError('这是单人演习或后勤任务');
           if (room.slots[1]) throw new RequestError('房间已满');
           room.slots[1] = newSlot(ws, room.slots[0].character === 'Asuka' ? 'Rei' : 'Asuka');
           attach(ws, room, 1);
@@ -614,6 +882,8 @@ function createServer({
           if (room) throw new RequestError('你已经在房间中');
           room = rooms.get(String(m.code || ''));
           if (!room) throw new RequestError('房间已结束，请重新创建');
+          if ((room.protocolVersion === 3) !== (m.protocolVersion === 3))
+            throw new RequestError('客户端与房间版本不一致，请刷新页面');
           const slot = room.slots.findIndex((s) => s && s.token === m.token);
           if (slot < 0 || room.slots[slot].username !== ws.username)
             throw new RequestError('无法恢复此座位');
@@ -624,6 +894,38 @@ function createServer({
         const s = room.slots[ws.slot];
         if (m.type === 'configure') {
           if (ws.slot !== 0 || room.game) throw new RequestError('只有房主能在战前选择关卡');
+          if (room.protocolVersion === 3) {
+            const mode = m.mode ?? room.mode;
+            if (
+              !['operation', 'magi', 'recovery'].includes(mode) ||
+              (room.solo && mode === 'operation')
+            )
+              throw new RequestError('当前房间不支持这个模式');
+            const id = m.missionId ?? room.missionId;
+            const definition = evaRooms.mission(id);
+            if ((mode === 'recovery') !== id.includes('recovery'))
+              throw new RequestError('后勤整备试验使用独立任务');
+            if (
+              mode === 'operation' &&
+              id.startsWith('mission.campaign.') &&
+              definition.campaignIndex + 1 > profiles.byName(s.username).profile.unlocked
+            )
+              throw new RequestError('房主尚未解锁此关卡');
+            if (m.difficulty !== undefined && !['relaxed', 'normal', 'hard'].includes(m.difficulty))
+              throw new RequestError('任务难度无效');
+            room.mode = mode;
+            room.missionId = id;
+            room.mission = Math.floor(definition.campaignIndex / 3);
+            room.stage = definition.campaignIndex % 3;
+            room.map = evaRooms.mapFor(id);
+            room.difficulty = m.difficulty ?? room.difficulty;
+            for (const seat of room.slots.filter(Boolean)) {
+              seat.ready = false;
+              seat.resolved = null;
+            }
+            lobby(room);
+            return;
+          }
           const mission = m.mission ?? room.mission,
             stage = m.stage ?? room.stage,
             difficulty = m.difficulty ?? room.difficulty;
@@ -649,6 +951,18 @@ function createServer({
           });
           lobby(room);
         } else if (m.type === 'choose') {
+          if (room.protocolVersion === 3) {
+            if (room.game) throw new RequestError('开战后不能更换配置');
+            if (room.mode === 'magi' && m.preset) s.trialPreset = structuredClone(m.preset);
+            else {
+              s.presetId = m.presetId;
+              s.trialPreset = null;
+            }
+            s.ready = false;
+            loadBuild(s, room);
+            lobby(room);
+            return;
+          }
           if (room.game || !['Asuka', 'Rei'].includes(m.character))
             throw new RequestError('当前无法选择角色');
           const other = room.slots.find((x) => x && x !== s && x.character === m.character);
@@ -663,10 +977,11 @@ function createServer({
         } else if (m.type === 'ready') {
           if (room.game) throw new RequestError('战斗已经开始');
           if (typeof m.ready !== 'boolean') throw new RequestError('准备状态无效');
-          loadBuild(s);
+          loadBuild(s, room);
           s.ready = m.ready;
           lobby(room);
-          if (room.slots.every((s) => s?.ws && s.ready)) start(room);
+          if ((room.solo ? room.slots.slice(0, 1) : room.slots).every((s) => s?.ws && s.ready))
+            start(room);
         } else if (m.type === 'input') {
           if (!room.game || m.round !== room.round) return;
           const input = m.input;
@@ -688,12 +1003,29 @@ function createServer({
               !command ||
               !Number.isSafeInteger(command.seq) ||
               command.seq < 1 ||
-              !['fire', 'heal', 'speed', 'special', 'ultimate', 'melee', 'item', 'ammo'].includes(
-                command.key,
-              ) ||
-              (command.key === 'ammo' && !['AP', 'HE', 'HESH'].includes(command.value))
+              ![
+                'fire',
+                'heal',
+                'speed',
+                'special',
+                'ultimate',
+                'melee',
+                'item',
+                'ammo',
+                'tactical1',
+                'tactical2',
+                'tactical3',
+                'consumable1',
+                'consumable2',
+                'targetPart',
+              ].includes(command.key) ||
+              (command.key === 'ammo' && !['AP', 'HE', 'HESH'].includes(command.value)) ||
+              (command.key === 'targetPart' &&
+                !['weapon', 'generator', 'core'].includes(command.value))
             )
               throw new RequestError('技能命令无效');
+            if (room.protocolVersion === 3 && ['special', 'ultimate', 'item'].includes(command.key))
+              throw new RequestError('请使用当前已装配的战术槽或消耗品');
             if (command.seq <= nextSeq) continue;
             if (command.seq !== nextSeq + 1) throw new RequestError('技能命令序号不连续');
             accepted.push(command);
@@ -711,9 +1043,14 @@ function createServer({
           }
           send(ws, { type: 'input-ack', round: room.round, seq: s.commandAck });
         } else if (m.type === 'pause') {
-          if (room.game?.status === 'playing' && room.slots.every((s) => s?.ws)) {
+          if (room.paused === 'storage')
+            throw new RequestError('记录尚未保存，恢复持久化后才能继续战斗');
+          if (
+            room.game?.status === 'playing' &&
+            (room.solo ? room.slots.slice(0, 1) : room.slots).every((s) => s?.ws)
+          ) {
             room.paused = !!m.paused;
-            room.slots.forEach(resetInput);
+            room.slots.filter(Boolean).forEach(resetInput);
             broadcast(room, snapshot(room));
           }
         } else if (m.type === 'prepare') {
@@ -736,7 +1073,13 @@ function createServer({
           if (!room.game || !['won', 'lost'].includes(room.game.status))
             throw new RequestError('当前战斗尚未结束');
           if (!room.awarded) throw new RequestError('战绩仍在保存，请稍后再试');
-          if (room.slots.some((s) => !s?.ws)) throw new RequestError('等待队友重连');
+          if ((room.solo ? room.slots.slice(0, 1) : room.slots).some((s) => !s?.ws))
+            throw new RequestError('等待队友重连');
+          if (room.protocolVersion === 3) {
+            if (m.type === 'next') throw new RequestError('请返回战前准备选择下一项任务');
+            start(room);
+            return;
+          }
           if (m.type === 'next') {
             if (
               room.custom ||
@@ -794,22 +1137,53 @@ function createServer({
         continue;
       }
       if (room.game) {
+        if (room.protocolVersion === 3 && room.paused === 'storage') {
+          try {
+            profiles.evaCheckpoint(room.round, evaRooms.records(room));
+            room.paused = (room.solo ? room.slots.slice(0, 1) : room.slots).every((s) => s?.ws)
+              ? false
+              : 'disconnect';
+            room.checkpointAt = now;
+            room.checkpointUsage = JSON.stringify(room.game.players.map((p) => p.used));
+          } catch {
+            /* Keep the frozen, unconfirmed tick for the next persistence retry. */
+          }
+        }
         if (!room.paused && room.game.status === 'playing') {
           room.game.step(
             1 / 30,
-            room.slots.map((slot) => {
+            room.slots.filter(Boolean).map((slot) => {
               const input = now - slot.lastInput < 300 ? { ...slot.input } : {};
               const command = slot.commands.shift();
               if (command) {
-                input[command.key] = command.key === 'ammo' ? command.value : true;
+                input[command.key] = ['ammo', 'targetPart'].includes(command.key)
+                  ? command.value
+                  : true;
                 slot.commandAck = command.seq;
               }
               return input;
             }),
           );
+          if (room.protocolVersion === 3) {
+            const usage = JSON.stringify(room.game.players.map((p) => p.used));
+            if (now - room.checkpointAt >= 1000 || room.checkpointUsage !== usage) {
+              try {
+                profiles.evaCheckpoint(room.round, evaRooms.records(room));
+                room.checkpointAt = now;
+                room.checkpointUsage = usage;
+              } catch (error) {
+                room.paused = 'storage';
+                broadcast(room, {
+                  type: 'error',
+                  message: '物资记录暂未保存，战斗已暂停并正在重试',
+                });
+                console.error('Battle checkpoint failed:', room.round, error.message);
+              }
+            }
+          }
           for (const name of room.game.events) room.events.push({ seq: ++room.eventSeq, name });
           room.events = room.events.slice(-256);
-          for (const slot of room.slots)
+          for (const slot of room.slots.filter(Boolean))
             send(slot.ws, { type: 'input-ack', round: room.round, seq: slot.commandAck });
         }
         if (
@@ -818,7 +1192,12 @@ function createServer({
           now >= room.rewardRetryAt
         ) {
           try {
-            if (!room.custom) {
+            if (room.protocolVersion === 3) {
+              retainResult(room);
+              profiles.evaFinishRound(room.round, pendingEvaResults.get(room.round));
+              pendingEvaResults.delete(room.round);
+              room.rewardRecorded = true;
+            } else if (!room.custom) {
               if (!room.rewardRecorded) {
                 retainResult(room);
                 profiles.recordRound(pendingResults.get(room.round) || roundResult(room));
@@ -853,6 +1232,14 @@ function createServer({
         pendingResults.delete(round);
       }
       profiles.settlePending();
+      for (const [round, records] of pendingEvaResults) {
+        profiles.evaFinishRound(round, records);
+        pendingEvaResults.delete(round);
+      }
+      for (const round of pendingEvaAborts) {
+        profiles.evaAbortRound(round);
+        pendingEvaAborts.delete(round);
+      }
       pendingSaveError = false;
     } catch (error) {
       if (!pendingSaveError)
@@ -876,6 +1263,39 @@ function createServer({
     clearInterval(heartbeat);
     clearInterval(settlementLoop);
     for (const room of rooms.values()) retainResult(room);
+    for (const room of rooms.values()) {
+      if (room.protocolVersion !== 3 || !room.game || room.awarded) continue;
+      try {
+        if (['won', 'lost'].includes(room.game.status)) {
+          profiles.evaFinishRound(
+            room.round,
+            pendingEvaResults.get(room.round) || evaRooms.records(room),
+          );
+          pendingEvaResults.delete(room.round);
+        } else {
+          profiles.evaCheckpoint(room.round, evaRooms.records(room));
+          profiles.evaAbortRound(room.round);
+        }
+      } catch (error) {
+        console.error('Shutdown could not resolve EVA round:', room.round, error.message);
+      }
+    }
+    for (const [round, records] of pendingEvaResults) {
+      try {
+        profiles.evaFinishRound(round, records);
+        pendingEvaResults.delete(round);
+      } catch (error) {
+        console.error('Shutdown could not persist removed EVA room:', round, error.message);
+      }
+    }
+    for (const round of pendingEvaAborts) {
+      try {
+        profiles.evaAbortRound(round);
+        pendingEvaAborts.delete(round);
+      } catch (error) {
+        console.error('Shutdown could not recover removed EVA room:', round, error.message);
+      }
+    }
     for (const [round, result] of pendingResults) {
       try {
         profiles.recordRound(result);

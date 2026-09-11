@@ -11,6 +11,10 @@ const sheet = (key: string, size: number): AssetDefinition => ({
 });
 const combat = ['asuka', 'rei'].map((pilot) => sheet(`combat-${pilot}`, 627));
 const sharedTerrain = ['dawn-barricade', 'dawn-courtyard'].map(image);
+const evaActors: AssetDefinition[] = ['unit00', 'unit01', 'unit02', 'unit08'].map((id) => ({
+  key: `eva-${id}`,
+  file: `/eva/battle-${id}.svg`,
+}));
 const legacyActors = [
   ...['Asuka', 'Rei'].flatMap((pilot) =>
     ['W', 'S', 'A'].map((dir) => sheet(`TankPlayer${pilot}_M${dir}`, 60)),
@@ -31,12 +35,14 @@ export const ASSET_PACKS: Record<AssetPack, readonly AssetDefinition[]> = {
     ...combat,
   ],
   'battle-legacy': [
+    ...evaActors,
     ...sharedTerrain,
     ...['map_1_18', 'map_1_01', 'map_1_14', 'map_1_54'].map(image),
     ...legacyActors,
     image('skill-icons'),
   ],
   'battle-new': [
+    ...evaActors,
     ...sharedTerrain,
     ...combat,
     ...[
@@ -58,6 +64,7 @@ export const ASSET_FILES = [
   ...new Set([
     ...Object.values(ASSET_PACKS)
       .flat()
+      .filter((asset) => !asset.file.startsWith('/'))
       .map((asset) => asset.file),
     'Hello.png',
   ]),

@@ -1,3 +1,4 @@
+import { appUrl } from '../app-url';
 import { useEffect, useRef, useState } from 'react';
 import type { Character } from '@dawn/simulation';
 import portraitModuleUrl from '../../../web/portrait-motion.js?url';
@@ -47,7 +48,7 @@ export function PilotDisplay({
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const src = `/assets/pilot-${pilot.toLowerCase()}.png`;
+  const src = appUrl(`/assets/pilot-${pilot.toLowerCase()}.png`);
   useEffect(() => {
     let disposed = false;
     setReady(false);

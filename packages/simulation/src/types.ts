@@ -1,3 +1,4 @@
+import type { BattleEvent, BattleMode, EvaProfile, ResolvedLoadout } from './eva-types';
 export type Character = 'Asuka' | 'Rei';
 export type Ammo = 'AP' | 'HE' | 'HESH';
 export type Skill = 'heal' | 'speed' | 'special' | 'ultimate';
@@ -120,6 +121,8 @@ export interface Actor extends Point {
   slowUntil?: number;
   lastOwner?: string;
   lastHit?: number;
+  markOwner?: string;
+  markUntil?: number;
 }
 export interface Player extends Actor {
   team: 1;
@@ -138,6 +141,58 @@ export interface Player extends Actor {
   energy: number;
   maxEnergy: number;
   activeItem: boolean;
+  accountId?: string;
+  machineId?: string;
+  driverId?: string;
+  supportId?: string;
+  resolved?: ResolvedLoadout;
+  tacticalCd: number[];
+  stock: Record<string, number>;
+  used: Record<string, number>;
+  targetPart?: 'weapon' | 'generator' | 'core';
+  barrierOwner?: string;
+  barrierUntil?: number;
+  chargedUntil?: number;
+  formUntil?: number;
+  passiveCooldowns?: Record<string, number>;
+  selectedAmmoId?: string | null;
+  barrierCapacity?: number;
+  markedBy?: string;
+}
+export interface BossPartState extends Point {
+  id: 'weapon' | 'generator' | 'core';
+  r: number;
+  hp: number;
+  maxHp: number;
+  state: 'active' | 'protected' | 'disabled';
+  disabledUntil: number;
+  immuneUntil: number;
+  contributors: string[];
+}
+export interface MissionObjective {
+  kind: 'assault' | 'escort' | 'defense';
+  label: string;
+  progress: number;
+  required: number;
+  state: 'active' | 'complete' | 'failed';
+  position?: Point;
+  hp: number;
+  maxHp: number;
+}
+export interface PowerZone extends Point {
+  id: string;
+  radius: number;
+  active: boolean;
+  backup: boolean;
+  regen: number;
+}
+export interface CoopActionState {
+  id: 'crossfire' | 'barrier-cover';
+  state: 'ready' | 'primed' | 'cooldown';
+  actorId?: string;
+  targetId?: string;
+  expiresAt: number;
+  cooldownUntil: number;
 }
 export interface Enemy extends Actor {
   team: 0;
@@ -148,6 +203,7 @@ export interface Enemy extends Actor {
   fire: number;
   boss: boolean;
   encounter?: BossEncounterState;
+  parts?: BossPartState[];
 }
 export interface Projectile extends Point {
   id: string;
@@ -164,6 +220,11 @@ export interface Projectile extends Point {
   pierce: number;
   hitIds: string[];
   boss?: boolean;
+  sourceId?: string;
+  direct?: boolean;
+  charged?: boolean;
+  coverBy?: string;
+  targetPart?: 'weapon' | 'generator' | 'core';
 }
 export interface Effect extends Point {
   kind: string;
@@ -184,6 +245,12 @@ export interface InputState {
   melee?: boolean;
   item?: boolean;
   ammo?: Ammo;
+  tactical1?: boolean;
+  tactical2?: boolean;
+  tactical3?: boolean;
+  consumable1?: boolean;
+  consumable2?: boolean;
+  targetPart?: 'weapon' | 'generator' | 'core';
 }
 export interface Cooperation {
   pads: Point[];
@@ -219,6 +286,12 @@ export interface GameState {
   effects: Effect[];
   events: string[];
   cooperation: Cooperation | null;
+  battleEvents?: BattleEvent[];
+  mode?: BattleMode;
+  missionId?: string;
+  objective?: MissionObjective | null;
+  powerZones?: PowerZone[];
+  coopActions?: CoopActionState[];
 }
 export interface GameOptions {
   coop?: boolean;
@@ -230,8 +303,17 @@ export interface GameOptions {
   practice?: boolean;
   gear?: Partial<Record<Character, string[]>>;
   loadouts?: Partial<Record<Character, Partial<Loadout>>>;
+  participants?: ResolvedLoadout[];
+  mode?: BattleMode;
+  missionId?: string;
+  roundId?: string;
+  condition?: string | null;
+  levelCap?: 1 | 2 | 3;
+  phaseId?: string;
+  simulatedAlly?: boolean;
 }
 export interface Profile {
+  eva?: EvaProfile;
   characters: Record<Character, { xp: number; nodes: string[] }>;
   tickets: number;
   pity: number;

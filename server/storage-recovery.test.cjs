@@ -7,6 +7,7 @@ const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { createProfiles, blank } = require('./profiles.cjs');
 const D = require('../packages/simulation/dist/index.js');
+const { DATABASE_VERSION, PROFILE_VERSION, CONTENT_VERSION } = require('./profile-migrations.cjs');
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dawn-storage-recovery-'));
@@ -37,7 +38,7 @@ function round(roundId = 'recover-round', mission = 0, stage = 0) {
     })),
   };
 }
-function oldDatabase(file, profile = blank()) {
+function oldDatabase(file, profile = D.Progression.createProfile()) {
   const db = new DatabaseSync(file);
   db.exec(`
     CREATE TABLE users (key TEXT PRIMARY KEY,username TEXT NOT NULL,salt TEXT NOT NULL,hash TEXT NOT NULL);
@@ -53,7 +54,7 @@ function oldDatabase(file, profile = blank()) {
 
 test('unversioned SQLite migration backs up and preserves coins, gear, skills and battle history', (t) => {
   const { file } = fixture(t),
-    p = blank();
+    p = D.Progression.createProfile();
   p.coins = 2000;
   p.tickets = 10;
   p.unlocked = 7;
@@ -79,12 +80,12 @@ test('unversioned SQLite migration backs up and preserves coins, gear, skills an
   const store = createProfiles(file);
   try {
     const user = store.byName('old_pilot');
-    assert.deepEqual(user.profile, p);
+    assert.deepEqual(user.profile, { ...p, eva: D.Eva.migrateProfile(p) });
     assert.equal(user.revision, 0);
     const info = store.schemaInfo();
-    assert.equal(info.databaseVersion, 1);
-    assert.equal(info.profileVersion, 1);
-    assert.equal(info.contentVersion, 1);
+    assert.equal(info.databaseVersion, DATABASE_VERSION);
+    assert.equal(info.profileVersion, PROFILE_VERSION);
+    assert.equal(info.contentVersion, CONTENT_VERSION);
     assert(fs.existsSync(info.migrationBackup));
     const backup = new DatabaseSync(info.migrationBackup, { readOnly: true });
     try {
@@ -127,7 +128,10 @@ test('failed migration leaves old schema and malformed data intact with a restor
   } finally {
     db.close();
   }
-  assert.equal(fs.readdirSync(dir).filter((name) => name.includes('.before-v1-')).length, 1);
+  assert.equal(
+    fs.readdirSync(dir).filter((name) => name.includes(`.before-v${DATABASE_VERSION}-`)).length,
+    1,
+  );
 });
 
 test('newer database and content versions reject startup without rewriting progress', async (t) => {
@@ -136,13 +140,15 @@ test('newer database and content versions reject startup without rewriting progr
   const original = await register(store, 'future_pilot');
   store.close();
   let db = new DatabaseSync(file);
-  db.exec('PRAGMA user_version=2');
+  db.exec(`PRAGMA user_version=${DATABASE_VERSION + 1}`);
   db.close();
   assert.throws(() => createProfiles(file), /newer game server/);
   db = new DatabaseSync(file);
   try {
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 2);
-    db.exec('PRAGMA user_version=1; UPDATE profiles SET content_version=2');
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, DATABASE_VERSION + 1);
+    db.exec(
+      `PRAGMA user_version=${DATABASE_VERSION}; UPDATE profiles SET content_version=${CONTENT_VERSION + 1}`,
+    );
   } finally {
     db.close();
   }
@@ -150,7 +156,7 @@ test('newer database and content versions reject startup without rewriting progr
   db = new DatabaseSync(file, { readOnly: true });
   try {
     const saved = db.prepare('SELECT * FROM profiles').get();
-    assert.equal(saved.content_version, 2);
+    assert.equal(saved.content_version, CONTENT_VERSION + 1);
     assert.deepEqual(JSON.parse(saved.json), original.profile);
   } finally {
     db.close();

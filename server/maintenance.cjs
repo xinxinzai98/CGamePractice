@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 
 const DEFAULT_DATABASE = path.resolve(__dirname, '../data/profiles.sqlite');
@@ -77,7 +78,7 @@ async function seedTestAccount(file, username, pilot, password) {
   if (canonical(database) === canonical(DEFAULT_DATABASE))
     throw Error('测试账号必须使用明确指定的独立测试库，不能写入默认玩家库');
   if (!['Asuka', 'Rei'].includes(pilot)) throw Error('看板角色须为 Asuka 或 Rei');
-  const store = require('./profiles.cjs').createProfiles(database);
+  const store = require('./profiles.cjs').createProfiles(database, { recoverRounds: false });
   try {
     const user = await store.register(username, password, { setHeader() {} });
     store.mutate(user, (p) => {
@@ -87,6 +88,16 @@ async function seedTestAccount(file, username, pilot, password) {
       p.characters.Asuka.xp = 2400;
       p.characters.Rei.xp = 2400;
       p.appearance.pilot = pilot;
+      p.eva.wallet.silver = 2000;
+      p.eva.wallet.tickets = 10;
+      for (const machine of Object.values(p.eva.machines)) {
+        machine.data = 5000;
+        machine.totalData = 5000;
+      }
+      for (const member of Object.values(p.eva.members)) {
+        member.data = 5000;
+        member.totalData = 5000;
+      }
     });
     return {
       database,
@@ -104,9 +115,131 @@ async function seedTestAccount(file, username, pilot, password) {
 
 async function resetPassword(file, username, password) {
   verifyDatabase(file);
-  const store = require('./profiles.cjs').createProfiles(file);
+  const store = require('./profiles.cjs').createProfiles(file, { recoverRounds: false });
   try {
     return { database: path.resolve(file), ...(await store.resetPassword(username, password)) };
+  } finally {
+    store.close();
+  }
+}
+
+function previewEvaMigration(file) {
+  const information = verifyDatabase(file),
+    db = new DatabaseSync(file, { readOnly: true });
+  try {
+    const rows = db
+      .prepare(
+        'SELECT u.username,p.* FROM profiles p JOIN users u ON u.key=p.user_key ORDER BY p.user_key',
+      )
+      .all();
+    const tables = new Set(
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+        .all()
+        .map((r) => r.name),
+    );
+    const pending = tables.has('rounds')
+      ? db.prepare("SELECT * FROM rounds WHERE state='pending' ORDER BY round_id").all()
+      : [];
+    const operations = tables.has('operations')
+      ? db
+          .prepare('SELECT user_key,operation_id FROM operations ORDER BY user_key,operation_id')
+          .all()
+      : [];
+    const { parseEnvelope, applyLegacyAward } = require('./profiles.cjs');
+    const accounts = rows.map((row) => {
+      const before = JSON.parse(row.json),
+        raw = structuredClone(before);
+      const appliedPending = [];
+      for (const pendingRound of pending) {
+        const result = { ...JSON.parse(pendingRound.result_json), at: pendingRound.recorded_at };
+        const participant = result.participants.find(
+          (p) => p.username.toLowerCase() === row.user_key,
+        );
+        if (
+          participant &&
+          !operations.some(
+            (o) =>
+              o.user_key === row.user_key && o.operation_id === `round:${pendingRound.round_id}`,
+          )
+        ) {
+          applyLegacyAward(raw, result, participant);
+          appliedPending.push(pendingRound.round_id);
+        }
+      }
+      const after = parseEnvelope(raw);
+      return {
+        username: row.username,
+        revision: row.revision || 0,
+        alreadyMigrated: before.eva !== undefined,
+        pendingLegacyRounds: appliedPending,
+        before: {
+          coins: before.coins,
+          tickets: before.tickets,
+          pity: before.pity,
+          characters: before.characters,
+          inventory: before.inventory,
+          equipment: before.equipment,
+          records: before.records,
+          eva: before.eva || null,
+        },
+        after: after.eva,
+        changed: before.eva === undefined || appliedPending.length > 0,
+      };
+    });
+    const fingerprint = crypto
+      .createHash('sha256')
+      .update(JSON.stringify({ version: information.schemaVersion, rows, pending, operations }))
+      .digest('hex');
+    return {
+      database: path.resolve(file),
+      readOnly: true,
+      ...information,
+      previewHash: fingerprint,
+      pendingLegacyRounds: pending.length,
+      accounts,
+    };
+  } finally {
+    db.close();
+  }
+}
+function applyEvaMigration(file, expectedHash) {
+  const preview = previewEvaMigration(file);
+  if (preview.previewHash !== expectedHash)
+    throw Error('迁移预览已过期或不匹配；请重新运行 migration-preview 并核对');
+  const store = require('./profiles.cjs').createProfiles(file);
+  try {
+    return {
+      database: path.resolve(file),
+      migrated: true,
+      schema: store.schemaInfo(),
+      accounts: preview.accounts.map((entry) => ({
+        username: entry.username,
+        eva: store.byName(entry.username).profile.eva,
+      })),
+    };
+  } finally {
+    store.close();
+  }
+}
+function quotaCommand(command, options) {
+  verifyDatabase(options.database);
+  const store = require('./profiles.cjs').createProfiles(options.database, {
+    recoverRounds: false,
+  });
+  try {
+    if (command === 'quota-confirm')
+      return store.quotaRecordPayment({
+        orderId: options.order,
+        tier: options.tier,
+        receiptReference: options.receipt,
+        operator: options.operator,
+      });
+    if (command === 'quota-issue') return store.quotaIssue(options.order, options.operator);
+    if (command === 'quota-reissue') return store.quotaReissue(options.order, options.operator);
+    if (command === 'quota-revoke') return store.quotaRevoke(options.order, options.operator);
+    if (command === 'quota-audit') return store.quotaAudit(options.order);
+    return store.quotaOrders();
   } finally {
     store.close();
   }
@@ -118,14 +251,20 @@ const commands = {
   restore: ['backup', 'database'],
   'seed-test': ['database', 'username', 'pilot'],
   'reset-password': ['database', 'username', 'offline'],
+  'migration-preview': ['database'],
+  'migrate-eva': ['database', 'preview-hash', 'offline'],
+  'quota-confirm': ['database', 'order', 'tier', 'receipt', 'operator'],
+  'quota-issue': ['database', 'order', 'operator'],
+  'quota-reissue': ['database', 'order', 'operator'],
+  'quota-revoke': ['database', 'order', 'operator'],
+  'quota-orders': ['database'],
+  'quota-audit': ['database', 'order'],
 };
 
 async function run(args, env = process.env) {
   const [command, ...flags] = args;
   if (!commands[command])
-    throw Error(
-      '命令：verify、backup、restore、seed-test、reset-password；用法见 docs/multiplayer.md',
-    );
+    throw Error(`命令：${Object.keys(commands).join('、')}；用法见 docs/multiplayer.md`);
   const options = {};
   for (let i = 0; i < flags.length; i++) {
     const name = flags[i].slice(2);
@@ -140,7 +279,11 @@ async function run(args, env = process.env) {
   }
   for (const name of commands[command])
     if (!options[name])
-      throw Error(`缺少 --${name}${name === 'offline' ? '：请先停止游戏服务再执行改密' : ''}`);
+      throw Error(`缺少 --${name}${name === 'offline' ? '：请先停止游戏服务再执行维护写入' : ''}`);
+  if (command === 'migration-preview') return previewEvaMigration(options.database);
+  if (command === 'migrate-eva')
+    return applyEvaMigration(options.database, options['preview-hash']);
+  if (command.startsWith('quota-')) return quotaCommand(command, options);
   if (command === 'verify')
     return { database: path.resolve(options.database), ...verifyDatabase(options.database) };
   if (command === 'backup') return snapshotDatabase(options.database, options.output);
@@ -168,4 +311,12 @@ if (require.main === module)
     },
   );
 
-module.exports = { verifyDatabase, snapshotDatabase, seedTestAccount, resetPassword, run };
+module.exports = {
+  verifyDatabase,
+  snapshotDatabase,
+  seedTestAccount,
+  resetPassword,
+  previewEvaMigration,
+  applyEvaMigration,
+  run,
+};

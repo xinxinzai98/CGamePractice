@@ -1,4 +1,5 @@
-import { Progression, ProtocolError, type Profile, type DrawReward } from '@dawn/simulation';
+import { appUrl } from '../app-url';
+import { Progression, Eva, ProtocolError, type Profile, type DrawReward } from '@dawn/simulation';
 export interface User {
   username: string;
   revision: number;
@@ -69,15 +70,18 @@ function session(data: Record<string, unknown>): Session {
   }
   if (!Number.isSafeInteger(user.revision) || (user.revision as number) < 0)
     throw new ProtocolError('会话缺少有效的存档版本');
+  const profile = Progression.parseProfile(data.profile);
+  const rawProfile = object(data.profile);
+  if (rawProfile.eva !== undefined) profile.eva = Eva.parseProfile(rawProfile.eva);
   return {
     user: { username: user.username, revision: user.revision as number },
-    profile: Progression.parseProfile(data.profile),
+    profile,
   };
 }
 export function request<A extends ApiAction>(action: A, body?: RequestBody): Promise<ApiResults[A]>;
 export async function request(action: ApiAction, body?: RequestBody): Promise<ApiResponse> {
   const response = await fetch(
-    `/api/${action}`,
+    appUrl(`/api/${action}`),
     action === 'me'
       ? { credentials: 'same-origin' }
       : {
@@ -102,9 +106,12 @@ export interface PublicRoom {
   stage: number;
   difficulty: 'relaxed' | 'normal' | 'hard';
   playersCount: number;
+  protocolVersion?: number;
+  missionId?: string;
+  mode?: string;
 }
 export async function getActiveRoom(): Promise<{ code: string; token: string } | null> {
-  const data = await responseData(await fetch('/api/room', { credentials: 'same-origin' }));
+  const data = await responseData(await fetch(appUrl('/api/room'), { credentials: 'same-origin' }));
   if (data.room === null) return null;
   const room = object(data.room);
   if (
@@ -123,7 +130,7 @@ function integer(value: unknown, min: number, max: number): number {
   return value;
 }
 export async function listRooms(): Promise<PublicRoom[]> {
-  const data = await responseData(await fetch('/api/rooms'));
+  const data = await responseData(await fetch(appUrl('/api/rooms')));
   if (!Array.isArray(data.rooms)) throw new ProtocolError('服务器缺少小队列表');
   return data.rooms.map((entry: unknown) => {
     const row = object(entry);
@@ -139,6 +146,11 @@ export async function listRooms(): Promise<PublicRoom[]> {
       stage: integer(row.stage, 0, 2),
       difficulty,
       playersCount: integer(row.playersCount, 1, 2),
+      ...(row.protocolVersion === undefined
+        ? {}
+        : { protocolVersion: integer(row.protocolVersion, 1, 3) }),
+      ...(typeof row.missionId === 'string' ? { missionId: row.missionId } : {}),
+      ...(typeof row.mode === 'string' ? { mode: row.mode } : {}),
     };
   });
 }

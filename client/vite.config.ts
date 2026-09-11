@@ -4,13 +4,16 @@ import { fileURLToPath, URL } from 'node:url';
 import { copyFileSync, createReadStream, mkdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { ASSET_FILES } from './src/game/asset-manifest.ts';
+const base = '/' + (process.env.DAWN_BASE_PATH || '/').replace(/^\/+|\/+$/g, '');
+const basePath = base === '/' ? '/' : base + '/';
+const stripBase = (url: string) => '/' + url.slice(basePath.length);
 const root = fileURLToPath(new URL('.', import.meta.url));
 const assetRoot = fileURLToPath(new URL('../web/assets', import.meta.url));
 function assets(): Plugin {
   return {
     name: 'dawn-source-assets',
     configureServer(server) {
-      server.middlewares.use('/assets', (req, res, next) => {
+      server.middlewares.use(`${basePath}assets`, (req, res, next) => {
         let file: string;
         try {
           file = path.resolve(
@@ -62,6 +65,7 @@ function assets(): Plugin {
 }
 export default defineConfig({
   root,
+  base: basePath,
   plugins: [react(), assets()],
   resolve: {
     alias: {
@@ -75,7 +79,10 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     watch: { usePolling: true, interval: 500 },
-    proxy: { '/api': 'http://127.0.0.1:8178', '/ws': { target: 'ws://127.0.0.1:8178', ws: true } },
+    proxy: {
+      [`${basePath}api`]: { target: 'http://127.0.0.1:8178', rewrite: stripBase },
+      [`${basePath}ws`]: { target: 'ws://127.0.0.1:8178', ws: true, rewrite: stripBase },
+    },
   },
   build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 1800 },
 });

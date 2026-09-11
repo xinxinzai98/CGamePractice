@@ -25,7 +25,7 @@ async function setup(t, seedCoins = null, seedProfile = {}) {
     });
     store.close();
   }
-  const app = createServer({ profilesFile: file });
+  const app = createServer({ allowLegacyClients: true, profilesFile: file });
   app.server.listen(0, '127.0.0.1');
   await once(app.server, 'listening');
   t.after(async () => {

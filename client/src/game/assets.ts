@@ -1,3 +1,4 @@
+import { appUrl } from '../app-url';
 import Phaser from 'phaser';
 import { AssetLoader } from './asset-loader';
 import type { AssetPack } from './asset-manifest';
@@ -43,8 +44,10 @@ export function createAssetLoader(
           scene.load.once('complete', onComplete);
           signal.addEventListener('abort', onAbort, { once: true });
           for (const asset of assets) {
-            const url = `/assets/${asset.file}`;
-            if (asset.frame)
+            const url = appUrl(asset.file.startsWith('/') ? asset.file : `/assets/${asset.file}`);
+            if (asset.file.endsWith('.svg'))
+              scene.load.svg(asset.key, url, { width: 128, height: 128 });
+            else if (asset.frame)
               scene.load.spritesheet(asset.key, url, {
                 frameWidth: asset.frame.width,
                 frameHeight: asset.frame.height,

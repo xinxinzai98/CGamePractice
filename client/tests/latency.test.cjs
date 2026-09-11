@@ -12,7 +12,10 @@ for (const roundTripMs of [80, 150]) {
   test(`two clients retain short commands and resume the same round at ${roundTripMs} ms RTT with jitter`, async (t) => {
     const { RoomClient } = await import('../src/services/room-client.ts');
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dawn-latency-'));
-    const app = createServer({ profilesFile: path.join(directory, 'profiles.sqlite') });
+    const app = createServer({
+      allowLegacyClients: true,
+      profilesFile: path.join(directory, 'profiles.sqlite'),
+    });
     const clients = [],
       sockets = [];
     app.server.listen(0, '127.0.0.1');

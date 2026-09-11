@@ -6,6 +6,7 @@ node_modules/
 web/output/
 
 /data/
+/work/eva-playtest/
 
 client/dist/
 packages/simulation/dist/

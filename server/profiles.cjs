@@ -13,11 +13,107 @@ const {
   migrateDatabase,
 } = require('./profile-migrations.cjs');
 const rules = () => require('../packages/simulation/dist/index.js');
-const blank = () => rules().Progression.createProfile();
+const blank = () => ({ ...rules().Progression.createProfile(), eva: rules().Eva.createProfile() });
+function parseEnvelope(value) {
+  const profile = rules().Progression.parseProfile(value);
+  profile.eva =
+    value.eva === undefined
+      ? rules().Eva.migrateProfile(profile)
+      : rules().Eva.parseProfile(value.eva);
+  return profile;
+}
+function applyLegacyAward(p, result, participant) {
+  const record = rules().Progression.parseBattleRecord({
+    round: result.round,
+    at: result.at,
+    character: participant.character,
+    mission: result.mission,
+    stage: result.stage,
+    won: result.status === 'won',
+    xp: result.status === 'won' ? 100 + result.mission * 50 : 0,
+    score: result.score,
+    time: result.time,
+    stats: participant.stats,
+  });
+  const xpBefore = p.characters[participant.character].xp;
+  p.characters[participant.character].xp = Math.min(300000, xpBefore + record.xp);
+  record.xp = p.characters[participant.character].xp - xpBefore;
+  if (record.won) {
+    const stageNumber = result.mission * 3 + result.stage + 1;
+    if (stageNumber <= p.unlocked) p.unlocked = Math.max(p.unlocked, Math.min(12, stageNumber + 1));
+    p.tickets++;
+    p.coins += 60 + (stageNumber - 1) * 15;
+  }
+  p.records.history.unshift(record);
+  p.records.history = p.records.history.slice(0, 50);
+  p.records[record.won ? 'wins' : 'losses']++;
+  return record;
+}
+function settleLegacyBeforeMigration(db) {
+  for (const row of db.prepare("SELECT * FROM rounds WHERE state='pending'").all()) {
+    const result = { ...JSON.parse(row.result_json), at: row.recorded_at };
+    for (const participant of result.participants) {
+      const key = participant.username.toLowerCase(),
+        operationId = `round:${row.round_id}`;
+      if (
+        db
+          .prepare('SELECT 1 FROM operations WHERE user_key=? AND operation_id=?')
+          .get(key, operationId)
+      )
+        continue;
+      const saved = db.prepare('SELECT * FROM profiles WHERE user_key=?').get(key);
+      if (!saved) throw Error('Pending legacy reward account does not exist');
+      const raw = JSON.parse(saved.json),
+        profile = rules().Progression.parseProfile(raw);
+      if (raw.eva !== undefined) profile.eva = raw.eva;
+      const before = {
+        coins: profile.coins,
+        tickets: profile.tickets,
+        inventory: [...profile.inventory],
+      };
+      const record = applyLegacyAward(profile, result, participant);
+      const after = {
+        coins: profile.coins,
+        tickets: profile.tickets,
+        inventory: [...profile.inventory],
+      };
+      const revision = saved.revision + 1;
+      db.prepare('UPDATE profiles SET json=?,revision=? WHERE user_key=?').run(
+        JSON.stringify(profile),
+        revision,
+        key,
+      );
+      db.prepare('INSERT INTO operations VALUES (?,?,?,?,?,?,?,?,?)').run(
+        key,
+        operationId,
+        'battle',
+        JSON.stringify({ round: row.round_id }),
+        JSON.stringify(record),
+        JSON.stringify({
+          coins: after.coins - before.coins,
+          tickets: after.tickets - before.tickets,
+          inventoryAdded: [],
+          inventoryRemoved: [],
+        }),
+        JSON.stringify({ before, after }),
+        revision,
+        row.recorded_at,
+      );
+    }
+    db.prepare("UPDATE rounds SET state='settled',settled_at=? WHERE round_id=?").run(
+      new Date().toISOString(),
+      row.round_id,
+    );
+  }
+}
 
 function createProfiles(
   file,
-  { legacyFile = path.join(path.dirname(file), 'profiles.json'), secureCookies = false } = {},
+  {
+    legacyFile = path.join(path.dirname(file), 'profiles.json'),
+    secureCookies = false,
+    recoverRounds = true,
+  } = {},
 ) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
@@ -36,7 +132,7 @@ function createProfiles(
   };
   let migrationBackup;
   try {
-    migrationBackup = migrateDatabase(db, file, rules().Progression.parseProfile);
+    migrationBackup = migrateDatabase(db, file, parseEnvelope, settleLegacyBeforeMigration);
     if (!db.prepare('SELECT 1 FROM migrations WHERE name=?').get('legacy-json-v1')) {
       const legacy = fs.existsSync(legacyFile)
         ? JSON.parse(fs.readFileSync(legacyFile, 'utf8'))
@@ -61,8 +157,10 @@ function createProfiles(
             ).run(
               key,
               JSON.stringify(
-                rules().Progression.migrateLegacyProfile(u.profile, (message) =>
-                  console.warn('Legacy profile migration:', message),
+                parseEnvelope(
+                  rules().Progression.migrateLegacyProfile(u.profile, (message) =>
+                    console.warn('Legacy profile migration:', message),
+                  ),
                 ),
               ),
               PROFILE_VERSION,
@@ -98,10 +196,25 @@ function createProfiles(
       salt: row.salt,
       hash: row.hash,
       revision: row.revision,
-      profile: rules().Progression.parseProfile(JSON.parse(row.json)),
+      profile: parseEnvelope(JSON.parse(row.json)),
     };
   };
-  const resources = (p) => ({ coins: p.coins, tickets: p.tickets, inventory: [...p.inventory] });
+  const resources = (p) => ({
+    coins: p.coins,
+    tickets: p.tickets,
+    inventory: [...p.inventory],
+    eva: p.eva
+      ? structuredClone({
+          wallet: p.eva.wallet,
+          stock: p.eva.stock,
+          owned: p.eva.owned,
+          machines: p.eva.machines,
+          members: p.eva.members,
+          licenseExpiresAt: p.eva.licenseExpiresAt,
+          pity: p.eva.pity,
+        })
+      : null,
+  });
   function commitMutation(fresh, fn, operationId, kind, request) {
     const key = fresh.username.toLowerCase(),
       requestJson = JSON.stringify(request);
@@ -119,13 +232,29 @@ function createProfiles(
       result = fn(fresh.profile);
     if (result && typeof result.then === 'function')
       throw Error('Profile mutations must be synchronous');
-    fresh.profile = rules().Progression.parseProfile(fresh.profile);
+    fresh.profile = parseEnvelope(fresh.profile);
     const after = resources(fresh.profile),
       delta = {
         coins: after.coins - before.coins,
         tickets: after.tickets - before.tickets,
         inventoryAdded: after.inventory.filter((id) => !before.inventory.includes(id)),
         inventoryRemoved: before.inventory.filter((id) => !after.inventory.includes(id)),
+        eva:
+          before.eva && after.eva
+            ? {
+                wallet: Object.fromEntries(
+                  Object.keys(after.eva.wallet).map((id) => [
+                    id,
+                    after.eva.wallet[id] - before.eva.wallet[id],
+                  ]),
+                ),
+                stock: Object.fromEntries(
+                  [
+                    ...new Set([...Object.keys(before.eva.stock), ...Object.keys(after.eva.stock)]),
+                  ].map((id) => [id, (after.eva.stock[id] || 0) - (before.eva.stock[id] || 0)]),
+                ),
+              }
+            : null,
       };
     fresh.revision++;
     db.prepare('UPDATE profiles SET json=?,revision=? WHERE user_key=?').run(
@@ -322,21 +451,7 @@ function createProfiles(
     });
   }
   function applyAward(p, result, participant) {
-    const record = battleRecord(result, participant),
-      xpBefore = p.characters[participant.character].xp;
-    p.characters[participant.character].xp = Math.min(300000, xpBefore + record.xp);
-    record.xp = p.characters[participant.character].xp - xpBefore;
-    if (record.won) {
-      const stageNumber = result.mission * 3 + result.stage + 1;
-      if (stageNumber <= p.unlocked)
-        p.unlocked = Math.max(p.unlocked, Math.min(12, stageNumber + 1));
-      p.tickets++;
-      p.coins += 60 + (stageNumber - 1) * 15;
-    }
-    p.records.history.unshift(record);
-    p.records.history = p.records.history.slice(0, 50);
-    p.records[record.won ? 'wins' : 'losses']++;
-    return record;
+    return applyLegacyAward(p, result, participant);
   }
   function settleRound(round) {
     return transaction(() => {
@@ -377,7 +492,22 @@ function createProfiles(
     throw error;
   }
 
+  const evaStore = require('./eva-store.cjs').createEvaStore({
+    db,
+    transaction,
+    byName,
+    commitMutation,
+    operation,
+    rules,
+  });
+  try {
+    if (recoverRounds) evaStore.evaRecover();
+  } catch (error) {
+    db.close();
+    throw error;
+  }
   return {
+    ...evaStore,
     get,
     byName,
     mutate,
@@ -393,6 +523,12 @@ function createProfiles(
       migrationBackup,
     }),
     health: () => ({
+      evaActiveRounds: db
+        .prepare("SELECT COUNT(*) AS count FROM eva_rounds WHERE state='active'")
+        .get().count,
+      evaPendingRounds: db
+        .prepare("SELECT COUNT(*) AS count FROM eva_rounds WHERE state='pending'")
+        .get().count,
       databaseVersion: db.prepare('PRAGMA user_version').get().user_version,
       pendingRounds: db.prepare("SELECT COUNT(*) AS count FROM rounds WHERE state='pending'").get()
         .count,
@@ -533,4 +669,4 @@ function createProfiles(
     },
   };
 }
-module.exports = { createProfiles, blank };
+module.exports = { createProfiles, blank, parseEnvelope, applyLegacyAward };

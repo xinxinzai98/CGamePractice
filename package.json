@@ -1,6 +1,6 @@
 {
   "name": "battle-for-the-dawn",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Web mecha co-op game with Phaser, TypeScript and persistent pilot profiles",
   "scripts": {

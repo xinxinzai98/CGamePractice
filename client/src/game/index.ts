@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import {
   Game as Simulation,
+  Eva,
   blankMap,
   campaign,
   type GameState,
@@ -146,9 +147,14 @@ export function createGame(container: HTMLElement, callbacks: GameCallbacks = {}
   window.addEventListener('focus', focus);
   document.addEventListener('visibilitychange', visibility);
   function startPractice(options: PracticeOptions) {
-    const map = options.tutorial ? campaign(0, 0) : blankMap(22, 16);
-    map.name = options.tutorial ? '同步训练 · 原作 Round 1' : '战术试验场';
-    if (!options.tutorial) {
+    const mission = Eva.MISSIONS.find((m) => m.id === options.missionId);
+    const map = mission
+      ? campaign(Math.floor(mission.campaignIndex / 3), mission.campaignIndex % 3)
+      : options.tutorial
+        ? campaign(0, 0)
+        : blankMap(22, 16);
+    map.name = mission?.name ?? (options.tutorial ? '同步训练 · 原作 Round 1' : '战术试验场');
+    if (!options.tutorial && !mission) {
       map.artSet = 'new';
       map.enemies = [
         { x: 7, y: 5, type: 1 },
@@ -172,13 +178,21 @@ export function createGame(container: HTMLElement, callbacks: GameCallbacks = {}
         },
       },
       practice: true,
+      participants: options.participants,
+      mode: options.mode ?? (options.tutorial ? 'tutorial' : 'magi'),
+      missionId: options.missionId,
+      seed: options.seed,
+      difficulty: options.difficulty,
+      roundId: options.roundId,
+      phaseId: options.phaseId,
+      simulatedAlly: options.simulatedAlly,
     });
     session.simulation.setPracticeOptions({ noCooldown: !!options.noCooldown });
     if (options.tutorial) session.simulation.players[0].hp -= 30;
     session.state = session.simulation;
     session.map = map;
     session.localIndex = 0;
-    session.round = 'practice';
+    session.round = options.roundId ?? 'practice';
     session.paused = false;
     session.view = 'practice';
     session.version++;
@@ -215,8 +229,23 @@ export function createGame(container: HTMLElement, callbacks: GameCallbacks = {}
     },
     usePracticeSkill(key) {
       if (!session.simulation || session.paused || session.blurred) return;
-      const allowed = ['fire', 'heal', 'speed', 'special', 'ultimate', 'melee', 'item'];
+      const allowed = [
+        'fire',
+        'heal',
+        'speed',
+        'special',
+        'ultimate',
+        'melee',
+        'item',
+        'tactical1',
+        'tactical2',
+        'tactical3',
+        'consumable1',
+        'consumable2',
+      ];
       if (allowed.includes(key)) session.input = { ...session.input, [key]: true };
+      if (key.startsWith('part:'))
+        session.input = { ...session.input, targetPart: key.slice(5) as InputState['targetPart'] };
     },
     destroy() {
       if (destroyed) return;

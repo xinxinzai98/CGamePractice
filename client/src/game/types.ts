@@ -1,4 +1,11 @@
-import type { GameState, GameMap, InputState, Loadout } from '@dawn/simulation';
+import type {
+  GameState,
+  GameMap,
+  InputState,
+  Loadout,
+  ResolvedLoadout,
+  BattleMode,
+} from '@dawn/simulation';
 import type { AssetPack } from './asset-manifest';
 export type { AssetPack } from './asset-manifest';
 export type Pilot = 'Asuka' | 'Rei';
@@ -10,6 +17,14 @@ export interface PracticeOptions {
   loadout?: Loadout;
   noCooldown?: boolean;
   tutorial?: boolean;
+  participants?: ResolvedLoadout[];
+  mode?: BattleMode;
+  missionId?: string;
+  seed?: number;
+  difficulty?: 'relaxed' | 'normal' | 'hard';
+  roundId?: string;
+  phaseId?: string;
+  simulatedAlly?: boolean;
 }
 export interface GameCallbacks {
   onReady?(): void;

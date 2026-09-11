@@ -6,3 +6,5 @@ export { BOSSES, LEVELS, CHARACTERS } from './content';
 export type { BossAttack, BossPhase, BossDefinition, LevelDefinition } from './content';
 
 export { ValidationError, ProtocolError } from './errors';
+export * as Eva from './eva';
+export * from './eva-types';

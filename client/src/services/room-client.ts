@@ -1,3 +1,4 @@
+import { appUrl } from '../app-url';
 import { ProtocolError, type InputState } from '@dawn/simulation';
 import {
   parseRoomMessage,
@@ -18,8 +19,22 @@ export interface RoomCallbacks {
   briefing: () => void;
   events?: (events: string[]) => void;
 }
-type CommandKey = 'fire' | 'heal' | 'speed' | 'special' | 'ultimate' | 'melee' | 'item' | 'ammo';
-type InputCommand = { seq: number; key: CommandKey; value?: InputState['ammo'] };
+type CommandKey =
+  | 'fire'
+  | 'heal'
+  | 'speed'
+  | 'special'
+  | 'ultimate'
+  | 'melee'
+  | 'item'
+  | 'ammo'
+  | 'tactical1'
+  | 'tactical2'
+  | 'tactical3'
+  | 'consumable1'
+  | 'consumable2'
+  | 'targetPart';
+type InputCommand = { seq: number; key: CommandKey; value?: string };
 export class RoomClient {
   private ws: WebSocket | null = null;
   private token = '';
@@ -47,20 +62,34 @@ export class RoomClient {
     this.callbacks = callbacks;
     this.connect();
   }
-  static resume(room: { code: string; token: string }, callbacks: RoomCallbacks) {
+  static resume(
+    room: { code: string; token: string; protocolVersion?: number },
+    callbacks: RoomCallbacks,
+  ) {
     return new RoomClient({ type: 'resume', ...room }, callbacks);
   }
   private connect() {
     if (this.closed) return;
     this.callbacks.connection(this.token ? 'reconnecting' : 'connecting');
     const ws = new WebSocket(
-      `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`,
+      `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${appUrl('ws')}`,
     );
     this.ws = ws;
     ws.onopen = () => {
       if (this.closed || this.ws !== ws) return;
       this.resuming = !!this.token;
-      this.send(this.token ? { type: 'resume', code: this.code, token: this.token } : this.initial);
+      this.send(
+        this.token
+          ? {
+              type: 'resume',
+              code: this.code,
+              token: this.token,
+              ...(this.initial.protocolVersion
+                ? { protocolVersion: this.initial.protocolVersion }
+                : {}),
+            }
+          : this.initial,
+      );
     };
     ws.onmessage = (event) => {
       if (this.closed || this.ws !== ws) return;
@@ -164,11 +193,26 @@ export class RoomClient {
   }
   input(input: InputState) {
     if (!this.round || this.closed) return;
-    for (const key of ['fire', 'heal', 'speed', 'special', 'ultimate', 'melee', 'item'] as const)
+    for (const key of [
+      'fire',
+      'heal',
+      'speed',
+      'special',
+      'ultimate',
+      'melee',
+      'item',
+      'tactical1',
+      'tactical2',
+      'tactical3',
+      'consumable1',
+      'consumable2',
+    ] as const)
       if (input[key] === true && this.lastInput[key] !== true)
         this.commands.push({ seq: ++this.commandSeq, key });
     if (input.ammo && input.ammo !== this.lastInput.ammo)
       this.commands.push({ seq: ++this.commandSeq, key: 'ammo', value: input.ammo });
+    if (input.targetPart && input.targetPart !== this.lastInput.targetPart)
+      this.commands.push({ seq: ++this.commandSeq, key: 'targetPart', value: input.targetPart });
     this.lastInput = { ...input };
     this.held = { dir: input.dir ?? -1, fire: input.fire === true };
     this.send({

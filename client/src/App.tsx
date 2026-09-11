@@ -1,6 +1,12 @@
+import { appUrl } from './app-url';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Progression,
+  Eva,
+  type EvaProfile,
+  type EvaBattleRecord,
+  type LoadoutPreset,
+  type BattleMode,
   Equipment,
   type Character,
   type Profile,
@@ -28,8 +34,28 @@ import { SaveTask, type SaveStatus } from './services/save-task';
 import { PilotDisplay } from './ui/PilotDisplay';
 import { BattleHud } from './ui/BattleHud';
 import { SkillIcon } from './ui/SkillIcon';
+import { TerminalIcon } from './ui/TerminalIcon';
 import { ProgressionPanels } from './ui/ProgressionPanels';
 import './ui/progression-panels.css';
+import {
+  EvaPanels,
+  EvaBriefingLoadout,
+  EvaBattleReport,
+  evaName,
+  type EvaTab,
+  type MagiLaunch,
+  type MagiDraft,
+} from './ui/EvaPanels';
+import {
+  fetchEva,
+  mutateEva,
+  pendingEva,
+  evaPendingState,
+  acceptsEvaResponse,
+  type EvaIdentity,
+  type EvaAction,
+  type EvaSession,
+} from './services/eva-api';
 type View =
   | 'cover'
   | 'loading'
@@ -38,10 +64,12 @@ type View =
   | 'battle'
   | 'practice'
   | 'skills'
+  | 'members'
   | 'shop'
   | 'supply'
   | 'records'
-  | 'gallery';
+  | 'gallery'
+  | 'magi';
 const names: Record<Character, string> = { Asuka: '明日香', Rei: '绫波丽' };
 const missionNames = ['旧日清晨', '河岸防线', '纵深行动', '黎明之战'];
 const emptyProfile = Progression.createProfile;
@@ -56,6 +84,24 @@ export function App() {
     [authOpen, setAuthOpen] = useState(false),
     [profileOpen, setProfileOpen] = useState(false),
     [settingsOpen, setSettingsOpen] = useState(false);
+  const [evaProfile, setEvaProfile] = useState<EvaProfile>(() => Eva.createProfile());
+  const [evaRevision, setEvaRevision] = useState(0);
+  const evaIdentity = useRef<EvaIdentity>({ username: null, revision: 0, epoch: 0 });
+  const [evaBusy, setEvaBusy] = useState(false);
+  const [evaPendingVersion, setEvaPendingVersion] = useState(0);
+  const [magiRecords, setMagiRecords] = useState<EvaBattleRecord[]>([]);
+  const [magiDraft, setMagiDraft] = useState<MagiDraft | null>(null);
+  const [lobbyTrialPreset, setLobbyTrialPreset] = useState<LoadoutPreset | null>(null);
+  const currentMagi = useRef<
+    | (MagiLaunch & {
+        round: string;
+        at: number;
+        participants: import('@dawn/simulation').ResolvedLoadout[];
+      })
+    | null
+  >(null);
+  const [evaMission, setEvaMission] = useState('mission.campaign.1');
+  const [evaMode, setEvaMode] = useState<BattleMode>('operation');
   const actionInput = useRef<InputState>({});
   const [rewardsSaved, setRewardsSaved] = useState(false);
   const [tutorialSync, setTutorialSync] = useState<{ status: SaveStatus; error: string }>({
@@ -116,6 +162,67 @@ export function App() {
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setMessage(''), 4200);
   }, []);
+  function evaRequestIdentity(): EvaIdentity {
+    const username = latest.current.user?.username ?? null,
+      epoch = sessions.current?.identityEpoch ?? 0;
+    if (evaIdentity.current.username !== username || evaIdentity.current.epoch !== epoch)
+      evaIdentity.current = { username, epoch, revision: 0 };
+    return { ...evaIdentity.current };
+  }
+  function applyEva(result: EvaSession, identity: EvaIdentity) {
+    const current = evaRequestIdentity();
+    if (!acceptsEvaResponse(current, identity, result)) return false;
+    evaIdentity.current = { ...current, revision: result.user.revision };
+    setEvaProfile(result.profile);
+    setEvaRevision(result.user.revision);
+    return true;
+  }
+  const refreshEva = useCallback(async () => {
+    const identity = evaRequestIdentity();
+    const result = await fetchEva();
+    applyEva(result, identity);
+    return result;
+  }, []);
+  async function callEva(
+    action: EvaAction,
+    body: Record<string, unknown> = {},
+  ): Promise<EvaSession | undefined> {
+    if (!user) {
+      setAuthOpen(true);
+      return;
+    }
+    const identity = evaRequestIdentity();
+    setEvaBusy(true);
+    try {
+      const result = await mutateEva(user.username, identity.revision, action, body);
+      if (!applyEva(result, identity)) return;
+      if (action === 'preset' || action === 'research' || action === 'upgrade')
+        room.current?.send({ type: 'ready', ready: false });
+      toast('操作已完成，档案已同步。');
+      return result;
+    } catch (error) {
+      toast(error instanceof Error ? error.message : '操作未完成');
+    } finally {
+      setEvaBusy(false);
+      setEvaPendingVersion((v) => v + 1);
+    }
+  }
+  useEffect(() => {
+    if (user)
+      void refreshEva().catch((e) => toast(e instanceof Error ? e.message : 'EVA 档案读取失败'));
+    else {
+      evaIdentity.current = {
+        username: null,
+        revision: 0,
+        epoch: sessions.current?.identityEpoch ?? 0,
+      };
+      setEvaProfile(Eva.createProfile());
+      setEvaRevision(0);
+    }
+    setMagiDraft(null);
+    setMagiRecords([]);
+    currentMagi.current = null;
+  }, [user?.username, refreshEva, toast]);
   const sessions = useRef<SessionController | null>(null);
   if (!sessions.current)
     sessions.current = new SessionController(
@@ -143,9 +250,10 @@ export function App() {
   const refresh = useCallback(() => sessions.current!.run('me'), []);
   const syncProfile = useCallback(async () => {
     const result = await refresh();
+    if (result.user) await refreshEva();
     if (!result.user) throw new Error('档案登录已失效，请重新登录后同步。');
     return result;
-  }, [refresh]);
+  }, [refresh, refreshEva]);
   useEffect(() => {
     const resize = () => setScale(Math.min(innerWidth / 1600, innerHeight / 900));
     resize();
@@ -276,8 +384,8 @@ export function App() {
     }
   }, [snapshot, view, current, tutorial, user, callApi, toast, syncProfile, rewardsSaved]);
   async function saveTutorial() {
-    if (await tutorialSave.current.run(() => callApi('tutorial', { complete: true })))
-      toast('同步训练已保存，补给奖励已写入档案。');
+    tutorialSave.current.reset(true);
+    toast('基础操作训练完成。教学不消耗物资，也不发放正式任务收益。');
   }
   function transitionTo(next: View, prepare: () => Promise<void>, complete?: () => void) {
     const run = () => {
@@ -347,6 +455,7 @@ export function App() {
     setPaused(false);
     setWaiting(false);
     setConnection('');
+    setLobbyTrialPreset(null);
     setView('lobby');
   };
   function connect(initial: Record<string, unknown>) {
@@ -355,110 +464,228 @@ export function App() {
       return;
     }
     if (room.current) {
+      if (initial.mode && !current) {
+        if (initial.mode !== latest.current.lobby?.mode) {
+          toast('请先离开当前小队，再创建另一模式的小队。');
+          return;
+        }
+        if (initial.mode === 'magi' && initial.preset) {
+          setLobbyTrialPreset(initial.preset as LoadoutPreset);
+          room.current.send({ type: 'choose', preset: initial.preset });
+        }
+      }
       setView(current ? 'battle' : 'briefing');
       return;
     }
+    setLobbyTrialPreset(
+      initial.mode === 'magi' && initial.preset ? (initial.preset as LoadoutPreset) : null,
+    );
     setConnection('connecting');
     lobbyPilot.current = null;
     lobbyMission.current = '';
-    const transport = new RoomClient(initial, {
-      joined: (code, index) => {
-        setRoomCode(code);
-        latest.current.slot = index;
-        setSlot(index);
-        setView('briefing');
-      },
-      lobby: (data) => {
-        latest.current.lobby = data;
-        setLobby(data);
-        const missionKey = `${data.mission}:${data.stage}:${data.difficulty}`;
-        if (lobbyMission.current !== missionKey) {
-          lobbyMission.current = missionKey;
-          setMission(data.mission);
-          setStage(data.stage);
-          setDifficulty(data.difficulty);
-        }
-        const c = data.slots[latest.current.slot]?.character;
-        if (c) {
-          setCharacter(c);
-          if (lobbyPilot.current !== c) {
-            lobbyPilot.current = c;
-            setWeapon(latest.current.profile.loadouts[c]);
+    const transport = new RoomClient(
+      { ...initial, protocolVersion: 3 },
+      {
+        joined: (code, index) => {
+          setRoomCode(code);
+          latest.current.slot = index;
+          setSlot(index);
+          setView('briefing');
+        },
+        lobby: (data) => {
+          latest.current.lobby = data;
+          setLobby(data);
+          if (data.missionId) setEvaMission(data.missionId);
+          if (data.mode) setEvaMode(data.mode);
+          const missionKey = `${data.mission}:${data.stage}:${data.difficulty}`;
+          if (lobbyMission.current !== missionKey) {
+            lobbyMission.current = missionKey;
+            setMission(data.mission);
+            setStage(data.stage);
+            setDifficulty(data.difficulty);
           }
-        }
+          const c = data.slots[latest.current.slot]?.character;
+          if (c) {
+            setCharacter(c);
+            if (lobbyPilot.current !== c) {
+              lobbyPilot.current = c;
+              setWeapon(latest.current.profile.loadouts[c]);
+            }
+          }
+        },
+        start: (data) => {
+          actionInput.current = {};
+          setRewardsSaved(false);
+          rewardSave.current.reset();
+          battleResourcesReady.current = false;
+          networkSnapshot.current = null;
+          setCurrent(data);
+          latest.current.current = data;
+          setPaused(false);
+          setWaiting(false);
+          setTutorial(false);
+          setSnapshot(null);
+          transitionTo(
+            'battle',
+            () =>
+              runtime.current!.prepareAssets(
+                data.map.artSet === 'new' ? 'battle-new' : 'battle-legacy',
+              ),
+            () => {
+              battleResourcesReady.current = true;
+              if (networkSnapshot.current)
+                runtime.current!.applyNetworkState(
+                  networkSnapshot.current,
+                  data.map,
+                  latest.current.slot,
+                  data.round,
+                );
+            },
+          );
+        },
+        state: (state, pause, wait, saved) => {
+          setRewardsSaved(saved);
+          const session = latest.current.current;
+          if (!session) return;
+          const full = { ...state, map: session.map, practice: false };
+          networkSnapshot.current = full;
+          if (battleResourcesReady.current)
+            runtime.current?.applyNetworkState(
+              full,
+              session.map,
+              latest.current.slot,
+              session.round,
+            );
+          setSnapshot(full);
+          setPaused(pause);
+          setWaiting(wait);
+        },
+        events: (events) => events.forEach((kind) => audio.current.play(kind)),
+        error: toast,
+        ended: (text) => {
+          transition.current++;
+          room.current = null;
+          setLobby(null);
+          setCurrent(null);
+          setSnapshot(null);
+          setView('lobby');
+          toast(text);
+        },
+        latency: setLatency,
+        connection: (status) => {
+          setConnection(status);
+          if (status === 'reconnecting') {
+            setWaiting(true);
+            setPaused(true);
+          }
+        },
+        briefing: () => {
+          setCurrent(null);
+          latest.current.current = null;
+          setSnapshot(null);
+          setPaused(false);
+          setView('briefing');
+        },
       },
-      start: (data) => {
-        actionInput.current = {};
-        setRewardsSaved(false);
-        rewardSave.current.reset();
-        battleResourcesReady.current = false;
-        networkSnapshot.current = null;
-        setCurrent(data);
-        latest.current.current = data;
-        setPaused(false);
-        setWaiting(false);
-        setTutorial(false);
-        setSnapshot(null);
-        transitionTo(
-          'battle',
-          () =>
-            runtime.current!.prepareAssets(
-              data.map.artSet === 'new' ? 'battle-new' : 'battle-legacy',
-            ),
-          () => {
-            battleResourcesReady.current = true;
-            if (networkSnapshot.current)
-              runtime.current!.applyNetworkState(
-                networkSnapshot.current,
-                data.map,
-                latest.current.slot,
-                data.round,
-              );
-          },
-        );
-      },
-      state: (state, pause, wait, saved) => {
-        setRewardsSaved(saved);
-        const session = latest.current.current;
-        if (!session) return;
-        const full = { ...state, map: session.map, practice: false };
-        networkSnapshot.current = full;
-        if (battleResourcesReady.current)
-          runtime.current?.applyNetworkState(full, session.map, latest.current.slot, session.round);
-        setSnapshot(full);
-        setPaused(pause);
-        setWaiting(wait);
-      },
-      events: (events) => events.forEach((kind) => audio.current.play(kind)),
-      error: toast,
-      ended: (text) => {
-        transition.current++;
-        room.current = null;
-        setLobby(null);
-        setCurrent(null);
-        setSnapshot(null);
-        setView('lobby');
-        toast(text);
-      },
-      latency: setLatency,
-      connection: (status) => {
-        setConnection(status);
-        if (status === 'reconnecting') {
-          setWaiting(true);
-          setPaused(true);
-        }
-      },
-      briefing: () => {
-        setCurrent(null);
-        latest.current.current = null;
-        setSnapshot(null);
-        setPaused(false);
-        setView('briefing');
-      },
-    });
+    );
     room.current = transport;
   }
+  function launchMagi(options: MagiLaunch) {
+    if (room.current) {
+      toast('请先离开当前小队，再开始本地演习。');
+      return;
+    }
+    const mission = Eva.MISSIONS.find((m) => m.id === options.missionId) ?? Eva.MISSIONS[0];
+    const simulated = Eva.simulationProfile();
+    let participants: import('@dawn/simulation').ResolvedLoadout[];
+    try {
+      const cap = mission.levelCap;
+      participants = [
+        Eva.resolveLoadout(simulated, options.preset, {
+          entityId: 'magi-player',
+          accountId: 'magi-local',
+          levelCap: cap,
+          simulation: true,
+        }),
+      ];
+      if (options.simulatedAlly) {
+        const ally =
+          options.allyPreset ??
+          Eva.defaultPreset(
+            Eva.MACHINES.find((m) => m.id !== options.preset.machineId && m.type === 'defense')
+              ?.id ?? Eva.MACHINES[0].id,
+          );
+        participants.push(
+          Eva.resolveLoadout(simulated, ally, {
+            entityId: 'magi-ally',
+            accountId: 'magi-simulated',
+            levelCap: cap,
+            simulation: true,
+          }),
+        );
+      }
+    } catch (error) {
+      toast(error instanceof Error ? error.message : '演习配置不合法');
+      return;
+    }
+    const round = `magi-${options.label}-${crypto.randomUUID()}`;
+    currentMagi.current = { ...options, round, at: Date.now(), participants };
+    transitionTo(
+      'practice',
+      () =>
+        runtime.current!.prepareAssets(mission.campaignIndex < 2 ? 'battle-legacy' : 'battle-new'),
+      () => {
+        setTutorial(false);
+        setPaused(false);
+        setCurrent(null);
+        setSnapshot(null);
+        runtime.current!.startPractice({
+          character: participants[0].legacyCharacter,
+          participants,
+          mode: options.mode,
+          missionId: mission.id,
+          seed: options.seed,
+          difficulty: options.difficulty,
+          roundId: round,
+          phaseId: options.phaseId,
+          simulatedAlly: options.simulatedAlly,
+        });
+      },
+    );
+  }
+  function captureMagi() {
+    const run = currentMagi.current;
+    if (!run || !snapshot) return;
+    const player = snapshot.players[0];
+    const record: EvaBattleRecord = {
+      round: run.round,
+      at: run.at,
+      mode: run.mode,
+      missionId: run.missionId,
+      ruleVersion: Eva.RULE_VERSION,
+      seed: run.seed,
+      difficulty: run.difficulty ?? 'normal',
+      condition: Eva.MISSIONS.find((m) => m.id === run.missionId)?.condition ?? null,
+      won: snapshot.status === 'won',
+      elapsed: snapshot.time,
+      participants: run.participants,
+      entityId: player?.id ?? run.participants[0].entityId,
+      events: structuredClone(snapshot.battleEvents ?? []),
+      hpFraction: player ? Math.max(0, player.hp / player.maxHp) : 1,
+      used: { ...(player?.used ?? {}) },
+      license: false,
+      completedStages:
+        snapshot.status === 'won'
+          ? (Eva.MISSIONS.find((m) => m.id === run.missionId)?.stages ?? 1)
+          : 0,
+    };
+    setMagiRecords((records) =>
+      records.some((r) => r.round === record.round) ? records : [...records, record],
+    );
+    currentMagi.current = null;
+  }
   function practice(withTutorial: boolean) {
+    currentMagi.current = null;
     if (room.current) {
       toast('请先离开作战小队。');
       return;
@@ -513,6 +740,11 @@ export function App() {
   const showNav = !['cover', 'loading', 'battle', 'practice'].includes(view);
   function ability(key: string) {
     if (view === 'practice') runtime.current?.usePracticeSkill(key);
+    else if (key.startsWith('part:'))
+      actionInput.current = {
+        ...actionInput.current,
+        targetPart: key.slice(5) as InputState['targetPart'],
+      };
     else actionInput.current = { ...actionInput.current, [key]: true };
   }
   async function saveWeapon() {
@@ -529,6 +761,7 @@ export function App() {
     }
   }
   const pendingState = sessions.current.pendingState();
+  const evaPending = evaPendingState(user?.username ?? null);
   return (
     <div
       className={
@@ -552,11 +785,19 @@ export function App() {
               if (e.key === 'Enter' || e.key === ' ') enter();
             }}
           >
-            {!assetsReady && <img className="cover-fallback" src="/assets/cover-dawn.png" alt="" />}
+            {!assetsReady && (
+              <img className="cover-fallback" src={appUrl('/assets/cover-dawn.png')} alt="" />
+            )}
             <div className="cover-vignette" />
             <div className="cover-title">
               <span>DAWN / PROJECT RESONANCE</span>
-              <h1>黎明之战</h1>
+              <h1>
+                <img
+                  className="dawn-wordmark"
+                  src={appUrl('/identity/dawn-wordmark.png')}
+                  alt="黎明之战"
+                />
+              </h1>
               <p>BATTLE FOR THE DAWN</p>
             </div>
             <div className="cover-enter">
@@ -608,14 +849,20 @@ export function App() {
           <>
             <header className="topbar">
               <button className="brand" onClick={() => navigate('lobby')}>
-                黎明之战<small>BATTLE FOR THE DAWN</small>
+                <img
+                  className="dawn-wordmark"
+                  src={appUrl('/identity/dawn-wordmark.png')}
+                  alt="黎明之战"
+                />
+                <small>BATTLE FOR THE DAWN</small>
               </button>
               <span className="system-status">
-                <i /> 指挥链路在线
+                <i /> {connection || (user ? '档案已连接' : '访客终端')}
               </span>
               <div className="wallet">
-                <span>{profile.coins} 金币</span>
-                <span>{profile.tickets} 补给券</span>
+                <span>{evaProfile.wallet.silver.toLocaleString()} 作战经费</span>
+                <span>{evaProfile.wallet.gold.toLocaleString()} 特务配额</span>
+                <span>{evaProfile.wallet.tickets} 申请券</span>
                 <button onClick={() => (user ? setProfileOpen(true) : setAuthOpen(true))}>
                   {user?.username ?? '登录档案'}
                 </button>
@@ -625,20 +872,27 @@ export function App() {
             <aside className="side-nav">
               {(
                 [
-                  ['lobby', '作战大厅', 'special'],
-                  ['skills', '机体技能树', 'blink'],
-                  ['shop', '配件仓库', 'item'],
-                  ['supply', '补给招募', 'ultimate'],
-                  ['records', '作战档案', 'fire'],
+                  ['lobby', '作战大厅', 'HANGAR'],
+                  ['skills', '机甲研究', 'RESEARCH'],
+                  ['members', '成员升级', 'PERSONNEL'],
+                  ['shop', '后勤整备库', 'LOGISTICS'],
+                  ['supply', '补给与配额', 'SUPPLY'],
+                  ['records', '作战档案', 'ARCHIVE'],
+                  ['magi', 'MAGI 演习', 'SIMULATION'],
                 ] as const
-              ).map(([id, title, kind]) => (
+              ).map(([id, title, label], index) => (
                 <button
                   key={id}
                   className={view === id ? 'active' : ''}
+                  aria-current={view === id ? 'page' : undefined}
                   onClick={() => navigate(id)}
                 >
-                  <SkillIcon kind={kind} size={27} />
-                  <span>{title}</span>
+                  <TerminalIcon kind={id} size={36} />
+                  <span>
+                    {title}
+                    <small>{label}</small>
+                  </span>
+                  <em>{String(index + 1).padStart(2, '0')}</em>
                 </button>
               ))}
               <button className="archive-nav" onClick={() => navigate('gallery')}>
@@ -647,154 +901,31 @@ export function App() {
             </aside>
           </>
         )}
-        {view === 'lobby' && (
-          <section className="lobby-screen screen-enter">
-            <div className="lobby-shade" />
-            <div className="lobby-heading">
-              <span className="eyebrow">OPERATIONS // HANGAR</span>
-              <h1>{user ? `${user.username}，欢迎归队。` : '欢迎来到黎明之战。'}</h1>
-            </div>
-            <div className="mecha-art">
-              <img
-                src={`/assets/mecha-${profile.appearance.pilot.toLowerCase()}.png`}
-                alt="待命机体"
-              />
-            </div>
-            <PilotDisplay
-              pilot={profile.appearance.pilot}
-              reducedMotion={reducedMotion || profile.appearance.reducedMotion}
-            />
-            <div className="lobby-slogan">
-              <span>SYNCHRONIZATION READY</span>
-              <h2>
-                同步启动。
-                <br />
-                向黎明出击。
-              </h2>
-            </div>
-            <aside className="lobby-panels">
-              <div className="glass-panel">
-                <span className="eyebrow">SQUAD LINK</span>
-                <h2>加入作战小队</h2>
-                <div className="join-row">
-                  <input
-                    aria-label="房间码"
-                    placeholder="六位房间码"
-                    value={roomCode}
-                    maxLength={6}
-                    onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                  />
-                  <button
-                    onClick={() =>
-                      /^[A-F0-9]{6}$/.test(roomCode)
-                        ? connect({ type: 'join', code: roomCode })
-                        : toast('请输入六位房间码。')
-                    }
-                  >
-                    加入
-                  </button>
-                </div>
-                <div className="public-rooms">
-                  {roomsError && (
-                    <p className="rooms-error" role="status">
-                      小队列表暂不可用：{roomsError}。{publicRooms.length > 0 && '以下为上次结果。'}
-                    </p>
-                  )}
-                  {publicRooms.length
-                    ? publicRooms.slice(0, 3).map((r) => (
-                        <button
-                          key={r.code}
-                          disabled={roomsError !== null}
-                          onClick={() => connect({ type: 'join', code: r.code })}
-                        >
-                          <span>
-                            {r.code} · {r.mission + 1}-{r.stage + 1}
-                          </span>
-                          <small>{r.playersCount}/2 加入 →</small>
-                        </button>
-                      ))
-                    : !roomsError && (
-                        <p>{roomsLoaded ? '当前没有等待中的小队' : '正在查找小队…'}</p>
-                      )}
-                </div>
-              </div>
-              <div className="glass-panel pilot-summary">
-                {(['Asuka', 'Rei'] as Character[]).map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => {
-                      setCharacter(c);
-                      navigate('skills');
-                    }}
-                  >
-                    <span
-                      className="unit-avatar"
-                      aria-hidden="true"
-                      style={{ backgroundImage: `url(/assets/combat-${c.toLowerCase()}.png)` }}
-                    />
-                    <span>
-                      <b>
-                        {names[c]} · Lv.{1 + Math.floor(profile.characters[c].xp / 300)}
-                      </b>
-                      <small>熟练度 {profile.characters[c].xp}</small>
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <div className="glass-panel training-entry">
-                <span className="eyebrow">SIMULATION</span>
-                <div className="pilot-toggle">
-                  {(['Asuka', 'Rei'] as Character[]).map((c) => (
-                    <button
-                      key={c}
-                      className={character === c ? 'active' : ''}
-                      onClick={() => setCharacter(c)}
-                    >
-                      {names[c]}
-                    </button>
-                  ))}
-                </div>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={noCooldown}
-                    onChange={(e) => setNoCooldown(e.target.checked)}
-                  />{' '}
-                  无限冷却 / 能量
-                </label>
-                <div>
-                  <button onClick={() => practice(true)}>新手教学</button>
-                  <button onClick={() => practice(false)}>自由训练 →</button>
-                </div>
-              </div>
-            </aside>
-            <div className="launch-control">
-              <div>
-                <span className="status-dot" /> 机体状态就绪
-                <small>选择任务与配置后，双方同步出击</small>
-              </div>
-              <button
-                className="primary"
-                disabled={connection === 'connecting'}
-                onClick={() => connect({ type: 'create' })}
-              >
-                {lobby ? '返回作战小队' : '组建作战小队'} →
-              </button>
-            </div>
-            <div className="campaign-strip">
-              {missionNames.map((name, i) => (
-                <div key={name}>
-                  <b>0{i + 1}</b>
-                  <span>
-                    {name}
-                    <small>
-                      {i + 1}-1 — {i + 1}-3
-                    </small>
-                  </span>
-                </div>
-              ))}
-            </div>
-          </section>
+        {(['lobby', 'skills', 'members', 'shop', 'supply', 'records', 'magi'] as View[]).includes(
+          view,
+        ) && (
+          <EvaPanels
+            tab={view as EvaTab}
+            profile={evaProfile}
+            username={user?.username ?? null}
+            busy={evaBusy}
+            onAction={callEva}
+            onToast={toast}
+            onLogin={() => setAuthOpen(true)}
+            onNavigate={navigate}
+            onPractice={launchMagi}
+            onConnect={connect}
+            roomCode={roomCode}
+            onRoomCode={setRoomCode}
+            rooms={publicRooms}
+            roomsError={roomsError}
+            roomsLoaded={roomsLoaded}
+            inRoom={!!lobby}
+            onBriefing={() => setView('briefing')}
+            magiRecords={magiRecords}
+            magiDraft={magiDraft}
+            onMagiDraft={setMagiDraft}
+          />
         )}
         {view === 'briefing' && lobby && (
           <section className="content-screen screen-enter">
@@ -813,38 +944,54 @@ export function App() {
                 <span className="eyebrow">01 / MISSION</span>
                 <h2>作战任务</h2>
                 <label>
-                  战役
+                  任务模式
                   <select
-                    aria-label="战役"
                     disabled={slot !== 0}
-                    value={mission}
+                    value={evaMode}
                     onChange={(e) => {
-                      setMission(Number(e.target.value));
-                      setStage(0);
+                      const mode = e.target.value as BattleMode;
+                      setEvaMode(mode);
+                      if (mode === 'recovery') setEvaMission('mission.recovery');
+                      else if (evaMission === 'mission.recovery')
+                        setEvaMission('mission.campaign.1');
                     }}
                   >
-                    {missionNames.map((name, i) => (
-                      <option key={name} value={i} disabled={i * 3 + 1 > lobby.unlocked}>
-                        第 {i + 1} 战役 · {name}
-                      </option>
-                    ))}
+                    <option value="operation">正式任务</option>
+                    <option value="magi">MAGI 双人演习</option>
+                    <option value="recovery">后勤整备试验</option>
                   </select>
                 </label>
                 <label>
-                  小关卡
+                  任务目标
                   <select
-                    aria-label="小关卡"
                     disabled={slot !== 0}
-                    value={stage}
-                    onChange={(e) => setStage(Number(e.target.value))}
+                    value={evaMission}
+                    onChange={(e) => setEvaMission(e.target.value)}
                   >
-                    {[0, 1, 2].map((i) => (
-                      <option key={i} value={i} disabled={mission * 3 + i + 1 > lobby.unlocked}>
-                        {mission + 1}-{i + 1} · {i === 2 ? '使徒核心' : '战术行动'}
+                    {Eva.MISSIONS.filter((m) =>
+                      evaMode === 'recovery'
+                        ? m.id === 'mission.recovery'
+                        : m.id !== 'mission.recovery',
+                    ).map((m) => (
+                      <option
+                        key={m.id}
+                        value={m.id}
+                        disabled={
+                          evaMode === 'operation' &&
+                          m.id.startsWith('mission.campaign.') &&
+                          m.campaignIndex + 1 > lobby.unlocked
+                        }
+                      >
+                        {m.name}
                       </option>
                     ))}
                   </select>
                 </label>
+                <p>{Eva.MISSIONS.find((m) => m.id === evaMission)?.description}</p>
+                <p>
+                  生效等级上限 {Eva.MISSIONS.find((m) => m.id === evaMission)?.levelCap} · 条件：
+                  {Eva.MISSIONS.find((m) => m.id === evaMission)?.condition ?? '标准作战'}
+                </p>
                 <label>
                   作战难度
                   <select
@@ -858,101 +1005,38 @@ export function App() {
                   </select>
                 </label>
                 <button
-                  disabled={slot !== 0 || mission * 3 + stage + 1 > lobby.unlocked}
+                  disabled={slot !== 0}
                   onClick={() =>
-                    room.current?.send({ type: 'configure', mission, stage, difficulty })
+                    room.current?.send({
+                      type: 'configure',
+                      missionId: evaMission,
+                      mode: evaMode,
+                      difficulty,
+                    })
                   }
                 >
-                  确认任务与难度
+                  确认任务与条件
                 </button>
                 <p className="muted">
-                  {stage === 2
-                    ? '同步装置破除力场后，集中火力攻击核心。'
-                    : '留意敌方预警与双方支援。'}
-                  变更任务后需要重新准备。
+                  修改任务与配装会取消准备。双方就绪后冻结机体、成员、物资及许可状态。
+                  {evaMode === 'magi' ? '演习保留真实机制，不产生正式收益。' : ''}
                 </p>
-                <small>
-                  房主已解锁至 {Math.floor((lobby.unlocked - 1) / 3) + 1}-
-                  {((lobby.unlocked - 1) % 3) + 1}，可带领低进度队友作战。
-                </small>
               </div>
               <div className="panel loadout-panel">
-                <span className="eyebrow">02 / PILOT & LOADOUT</span>
-                <h2>出战配置</h2>
-                <div className="character-options">
-                  {(['Asuka', 'Rei'] as Character[]).map((c) => (
-                    <button
-                      key={c}
-                      className={activePilot === c ? 'active' : ''}
-                      onClick={() => room.current?.send({ type: 'choose', character: c })}
-                    >
-                      <span
-                        className="unit-avatar large"
-                        aria-hidden="true"
-                        style={{ backgroundImage: `url(/assets/combat-${c.toLowerCase()}.png)` }}
-                      />
-                      <span>{names[c]}</span>
-                      <small>
-                        {c === 'Asuka' ? '重装爆发 / A.T. 力场' : '相位机动 / 共鸣支援'}
-                      </small>
-                    </button>
-                  ))}
-                </div>
-                <p className="loadout-summary">
-                  {profile.characters[activePilot].nodes
-                    .map((id) => Progression.TREES[activePilot].find((n) => n.id === id)?.name)
-                    .filter(Boolean)
-                    .join(' / ') || '基础同步配置'}
-                </p>
-                <div className="loadout-actions">
-                  <button
-                    onClick={() => {
-                      setCharacter(activePilot);
-                      setView('skills');
-                    }}
-                  >
-                    技能树配置
-                  </button>
-                  <button
-                    onClick={() => {
-                      setCharacter(activePilot);
-                      setView('shop');
-                    }}
-                  >
-                    装备配置
-                  </button>
-                </div>
-                <label>
-                  远程弹种
-                  <select
-                    value={weapon.ammo}
-                    disabled={requestCount > 0}
-                    onChange={(e) =>
-                      setWeapon({ ...weapon, ammo: e.target.value as Loadout['ammo'] })
-                    }
-                  >
-                    <option value="AP">阳电子穿甲弹</option>
-                    <option value="HE">N² 高爆弹</option>
-                    <option value="HESH">共振碎甲弹</option>
-                  </select>
-                </label>
-                <label>
-                  近战武器
-                  <select
-                    value={weapon.melee}
-                    disabled={requestCount > 0}
-                    onChange={(e) =>
-                      setWeapon({ ...weapon, melee: e.target.value as Loadout['melee'] })
-                    }
-                  >
-                    <option value="blade">高振动刀刃</option>
-                    <option value="spear">相位长矛</option>
-                  </select>
-                </label>
-                <button disabled={requestCount > 0} onClick={() => void saveWeapon()}>
-                  保存武器配置
-                </button>
-                <p className="muted">装扮扩展位 · 个人展示可在档案中切换</p>
+                <span className="eyebrow">02 / MACHINE & CREW</span>
+                <EvaBriefingLoadout
+                  profile={evaProfile}
+                  presetId={lobby.slots[slot]?.presetId}
+                  busy={evaBusy}
+                  levelCap={Eva.MISSIONS.find((m) => m.id === lobby.missionId)?.levelCap ?? 3}
+                  mode={lobby.mode ?? 'operation'}
+                  trialPreset={lobbyTrialPreset}
+                  onChoose={(presetId) => {
+                    setLobbyTrialPreset(null);
+                    room.current?.send({ type: 'choose', presetId });
+                  }}
+                  onEdit={() => setView(lobby.mode === 'magi' ? 'magi' : 'lobby')}
+                />
               </div>
               <div className="panel squad-panel">
                 <span className="eyebrow">03 / SYNCHRONIZATION</span>
@@ -960,10 +1044,16 @@ export function App() {
                 {lobby.slots.map((seat, i) => (
                   <div key={i} className={'squad-seat ' + (seat?.ready ? 'ready' : '')}>
                     <b>
-                      {seat ? names[seat.character] : '等待驾驶员'}
+                      {seat ? evaName(seat.machineId) : '等待驾驶员'}
                       {i === slot ? ' · 你' : ''}
                     </b>
                     <span>{seat?.username || '等待连接'}</span>
+                    {seat && (
+                      <small>
+                        {evaName(seat.driverId)} / {evaName(seat.supportId)} · 生效{' '}
+                        {seat.effectiveLevel ?? 1} 级
+                      </small>
+                    )}
                     <small>
                       {!seat
                         ? '空闲席位'
@@ -990,44 +1080,8 @@ export function App() {
                 >
                   {lobby.slots[slot]?.ready ? '取消准备' : '我已准备'}
                 </button>
-                <small>双方确认后自动出击</small>
+                <small>{lobby.solo ? '单人确认后开始恢复试验' : '双方确认后自动出击'}</small>
               </div>
-            </div>
-          </section>
-        )}
-        {(['skills', 'shop', 'supply', 'records'] as View[]).includes(view) && (
-          <section className="content-screen progression-screen screen-enter">
-            <div className="section-heading">
-              <div>
-                <span className="eyebrow">PILOT ARCHIVE</span>
-                <h1>
-                  {view === 'skills'
-                    ? '机体技能树'
-                    : view === 'shop'
-                      ? '配件仓库'
-                      : view === 'supply'
-                        ? '补给招募'
-                        : '作战档案'}
-                </h1>
-              </div>
-              {lobby && <button onClick={() => setView('briefing')}>返回战前准备</button>}
-            </div>
-            <div className="progression-body">
-              <ProgressionPanels
-                view={view as 'skills' | 'shop' | 'supply' | 'records'}
-                profile={profile}
-                username={user?.username ?? null}
-                character={character}
-                onCharacter={setCharacter}
-                onApi={callApi}
-                onToast={toast}
-                onLogin={() => setAuthOpen(true)}
-                onTrial={(c, nodes) => {
-                  setTrialBuilds((v) => ({ ...v, [c]: nodes }));
-                  setCharacter(c);
-                  toast('试配已保存到本次模拟训练。');
-                }}
-              />
             </div>
           </section>
         )}
@@ -1042,7 +1096,7 @@ export function App() {
             </div>
             <div className="gallery-grid">
               <article>
-                <img src="/assets/Hello.png" alt="2017 年原始封面" />
+                <img src={appUrl('/assets/Hello.png')} alt="2017 年原始封面" />
                 <h2>原作记忆</h2>
                 <p>
                   闫鑫、方铮辉于 2017
@@ -1050,7 +1104,7 @@ export function App() {
                 </p>
               </article>
               <article>
-                <img src="/assets/hangar-dawn.png" alt="新机库概念图" />
+                <img src={appUrl('/assets/hangar-dawn.png')} alt="新机库概念图" />
                 <h2>双机共鸣</h2>
                 <p>
                   新客户端延续机体、角色与合作主题。新增概念画、战斗素材及图标独立保存，来源见仓库素材记录。
@@ -1092,7 +1146,10 @@ export function App() {
                 onClick={() =>
                   view === 'battle'
                     ? leaveRoom()
-                    : (runtime.current?.pausePractice(true), loadInto('lobby'), setSnapshot(null))
+                    : (captureMagi(),
+                      runtime.current?.pausePractice(true),
+                      loadInto('magi'),
+                      setSnapshot(null))
                 }
               >
                 离开作战
@@ -1102,7 +1159,7 @@ export function App() {
         )}
         {view === 'battle' && snapshot && ['won', 'lost'].includes(snapshot.status) && (
           <div className="battle-modal">
-            <section className="result-card">
+            <section className="result-card eva-result-card">
               <span className="eyebrow">OPERATION REPORT</span>
               <h1>{snapshot.status === 'won' ? '任务完成' : '机体信号中断'}</h1>
               <p>
@@ -1112,9 +1169,13 @@ export function App() {
                     ? `服务器已结算，档案读取失败：${rewardSync.error}`
                     : rewardSync.status !== 'saved'
                       ? '服务器已结算，正在同步个人档案…'
-                      : snapshot.status === 'won'
-                        ? '熟练度、金币与补给券已写入驾驶员档案。'
-                        : '本次记录已保存。调整配装，再次出击。'}
+                      : current?.mode === 'magi'
+                        ? '演习记录已保存；正式成长、经费、库存和损伤均未改变。'
+                        : current?.mode === 'recovery'
+                          ? '后勤试验已结算，仅恢复作战经费，不发放培养数据。'
+                          : snapshot.status === 'won'
+                            ? '四项培养数据、作战经费和物资结算已写入档案。'
+                            : '本次记录已保存。调整配装，再次出击。'}
               </p>
               {rewardSync.status === 'failed' && (
                 <button
@@ -1125,30 +1186,11 @@ export function App() {
                   {user ? '重新同步档案' : '重新登录档案'}
                 </button>
               )}
-              <table>
-                <thead>
-                  <tr>
-                    <th>驾驶员</th>
-                    <th>伤害</th>
-                    <th>命中率</th>
-                    <th>救援</th>
-                    <th>协同</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {snapshot.players.map((p) => (
-                    <tr key={p.id}>
-                      <td>{names[p.character]}</td>
-                      <td>{Math.round(p.stats.damage)}</td>
-                      <td>
-                        {p.stats.shots ? Math.round((p.stats.hits / p.stats.shots) * 100) : 0}%
-                      </td>
-                      <td>{p.stats.rescues}</td>
-                      <td>{p.stats.assists}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {evaProfile.battles.find((battle) => battle.round === current?.round) && (
+                <EvaBattleReport
+                  record={evaProfile.battles.find((battle) => battle.round === current?.round)!}
+                />
+              )}
               {slot === 0 && (
                 <>
                   <button
@@ -1159,6 +1201,7 @@ export function App() {
                     返回战前准备
                   </button>
                   {snapshot.status === 'won' &&
+                    current?.protocolVersion !== 3 &&
                     !(current?.mission === 3 && current?.stage === 2) && (
                       <button
                         disabled={!rewardsSaved || rewardSync.status !== 'saved'}
@@ -1180,6 +1223,45 @@ export function App() {
             </section>
           </div>
         )}
+        {view === 'practice' &&
+          currentMagi.current &&
+          snapshot &&
+          ['won', 'lost'].includes(snapshot.status) && (
+            <div className="battle-modal">
+              <section className="result-card">
+                <span className="eyebrow">MAGI SIMULATION</span>
+                <h1>{snapshot.status === 'won' ? '演习完成' : '演习结束'}</h1>
+                <p>本次用时 {snapshot.time.toFixed(1)} 秒。正式库存、损伤、成长和资历均未改变。</p>
+                <button
+                  className="primary"
+                  onClick={() => {
+                    captureMagi();
+                    runtime.current?.pausePractice(true);
+                    setView('records');
+                  }}
+                >
+                  保存本次对照并复盘
+                </button>
+                <button
+                  onClick={() => {
+                    const run = currentMagi.current!;
+                    captureMagi();
+                    launchMagi(run);
+                  }}
+                >
+                  相同条件重试
+                </button>
+                <button
+                  onClick={() => {
+                    captureMagi();
+                    setView('magi');
+                  }}
+                >
+                  返回 MAGI
+                </button>
+              </section>
+            </div>
+          )}
         {authOpen && (
           <AuthModal
             onApi={callApi}
@@ -1291,6 +1373,38 @@ export function App() {
               </label>
               <p className="muted">画布与界面保持 16:9 等比缩放。</p>
             </div>
+          </div>
+        )}
+        {user && (evaPending.operation || evaPending.error) && !evaBusy && (
+          <div className="toast eva-pending" role="status">
+            <p>{evaPending.error || '有一笔 EVA 操作等待核实，重试使用原操作编号。'}</p>
+            {!evaPending.error && (
+              <button
+                onClick={async () => {
+                  const identity = evaRequestIdentity();
+                  const pending = pendingEva(user.username);
+                  if (!pending) return;
+                  setEvaBusy(true);
+                  try {
+                    const result = await mutateEva(
+                      user.username,
+                      identity.revision,
+                      pending.action,
+                      pending.body,
+                      pending,
+                    );
+                    if (applyEva(result, identity)) toast('待处理操作已核实。');
+                  } catch (error) {
+                    toast(error instanceof Error ? error.message : '核实失败');
+                  } finally {
+                    setEvaBusy(false);
+                    setEvaPendingVersion((v) => v + 1);
+                  }
+                }}
+              >
+                核实待处理操作
+              </button>
+            )}
           </div>
         )}
         {(message ||

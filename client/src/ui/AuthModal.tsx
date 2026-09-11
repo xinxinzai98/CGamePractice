@@ -1,3 +1,4 @@
+import { appUrl } from '../app-url';
 import { useState, type FormEvent } from 'react';
 import type { ApiClient } from '../services/api';
 export function AuthModal({
@@ -35,6 +36,16 @@ export function AuthModal({
         <button className="modal-close" onClick={onClose} aria-label="关闭登录">
           ×
         </button>
+        <aside className="auth-art" aria-hidden="true">
+          <img src={appUrl('/assets/pilot-asuka.png')} alt="" />
+          <span>NERV / PERSONNEL DIVISION</span>
+          <h2>
+            人类的未来
+            <br />
+            在这里并肩。
+          </h2>
+          <small>01 / PILOT AUTHENTICATION</small>
+        </aside>
         <span className="eyebrow">DAWN / PILOT AUTHENTICATION</span>
         <h1 id="auth-title">{register ? '建立驾驶员档案' : '欢迎归队'}</h1>
         <div className="auth-tabs">

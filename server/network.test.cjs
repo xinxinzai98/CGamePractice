@@ -13,6 +13,7 @@ async function setup(t, options = {}) {
     '<title>Test client</title>',
   );
   const app = createServer({
+    allowLegacyClients: true,
     webRoot: dir,
     profilesFile: require('node:path').join(dir, 'profiles.sqlite'),
     ...options,

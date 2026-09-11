@@ -5,6 +5,8 @@ import {
   type Character,
   type GameMap,
   type GameState,
+  type ResolvedLoadout,
+  type BattleMode,
 } from '@dawn/simulation';
 
 export interface Seat {
@@ -12,6 +14,11 @@ export interface Seat {
   username: string | null;
   connected: boolean;
   ready: boolean;
+  presetId?: string;
+  machineId?: string;
+  driverId?: string;
+  supportId?: string;
+  effectiveLevel?: 1 | 2 | 3;
 }
 export interface Lobby {
   code: string;
@@ -21,6 +28,10 @@ export interface Lobby {
   map: string;
   unlocked: number;
   slots: (Seat | null)[];
+  protocolVersion?: 3;
+  mode?: BattleMode;
+  missionId?: string;
+  solo?: boolean;
 }
 export interface StartMessage {
   map: GameMap;
@@ -29,6 +40,11 @@ export interface StartMessage {
   difficulty: Lobby['difficulty'];
   characters: Character[];
   round: string;
+  protocolVersion?: 3;
+  participants?: ResolvedLoadout[];
+  mode?: BattleMode;
+  missionId?: string;
+  solo?: boolean;
 }
 export type NetworkState = Omit<GameState, 'map' | 'practice'>;
 export type RoomMessage =
@@ -82,6 +98,28 @@ function seat(value: unknown): Seat | null {
     username: data.username === null ? null : text(data.username, 'username'),
     connected: bool(data.connected, 'connected'),
     ready: bool(data.ready, 'ready'),
+    ...(data.presetId === undefined ? {} : { presetId: text(data.presetId, 'presetId') }),
+    ...(data.machineId === undefined ? {} : { machineId: text(data.machineId, 'machineId') }),
+    ...(data.driverId === undefined ? {} : { driverId: text(data.driverId, 'driverId') }),
+    ...(data.supportId === undefined ? {} : { supportId: text(data.supportId, 'supportId') }),
+    ...(data.effectiveLevel === undefined
+      ? {}
+      : {
+          effectiveLevel: (index(data.effectiveLevel, 3, 'effectiveLevel') ||
+            invalid('effectiveLevel')) as 1 | 2 | 3,
+        }),
+  };
+}
+function evaFields(data: Record<string, unknown>) {
+  if (data.protocolVersion === undefined) return {};
+  if (data.protocolVersion !== 3) return invalid('客户端与服务器版本不一致，请刷新页面');
+  if (!['operation', 'magi', 'tutorial', 'recovery'].includes(String(data.mode)))
+    return invalid('mode');
+  return {
+    protocolVersion: 3 as const,
+    mode: data.mode as BattleMode,
+    missionId: text(data.missionId, 'missionId'),
+    solo: bool(data.solo, 'solo'),
   };
 }
 function state(value: unknown): NetworkState {
@@ -140,9 +178,13 @@ export function parseRoomMessage(raw: string): RoomMessage | null {
         map: text(data.map, 'map'),
         unlocked: index(data.unlocked, 12, 'unlocked') || invalid('unlocked'),
         slots: data.slots.map(seat),
+        ...evaFields(data),
       };
     case 'start': {
-      if (!Array.isArray(data.characters) || data.characters.length !== 2)
+      if (
+        !Array.isArray(data.characters) ||
+        data.characters.length !== (data.protocolVersion === 3 && data.solo === true ? 1 : 2)
+      )
         return invalid('characters');
       let map: GameMap;
       try {
@@ -159,6 +201,24 @@ export function parseRoomMessage(raw: string): RoomMessage | null {
         difficulty: difficulty(data.difficulty),
         characters: data.characters.map(character),
         round: text(data.round, 'round'),
+        ...evaFields(data),
+        ...(data.protocolVersion === 3
+          ? {
+              participants: (() => {
+                if (
+                  !Array.isArray(data.participants) ||
+                  data.participants.length !== (data.solo ? 1 : 2)
+                )
+                  return invalid('participants');
+                for (const value of data.participants) {
+                  const participant = object(value, 'participant');
+                  for (const key of ['entityId', 'accountId', 'machineId', 'driverId', 'supportId'])
+                    text(participant[key], key);
+                }
+                return data.participants as ResolvedLoadout[];
+              })(),
+            }
+          : {}),
       };
     }
     case 'state':

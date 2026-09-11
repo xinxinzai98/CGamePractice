@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import {
   BOSSES,
+  Eva,
   type Actor,
   type Effect,
   type Enemy,
@@ -19,6 +20,7 @@ export class BattleScene extends Phaser.Scene {
   private actors = new Map<string, ActorVisual>();
   private terrain: Phaser.GameObjects.Image[] = [];
   private overlay!: Phaser.GameObjects.Graphics;
+  private grid!: Phaser.GameObjects.Graphics;
   private hud!: Phaser.GameObjects.Graphics;
   private bossLabel!: Phaser.GameObjects.Text;
   private objectiveLabel!: Phaser.GameObjects.Text;
@@ -31,16 +33,18 @@ export class BattleScene extends Phaser.Scene {
   private keys: Record<string, Phaser.Input.Keyboard.Key> = {};
   private effectSeen = new Set<string>();
   private wasVisible = false;
+  private selectedPart: 'weapon' | 'generator' | 'core' = 'core';
   constructor(session: Session) {
     super('Battle');
     this.session = session;
   }
   create() {
-    this.cameras.main.setViewport(0, 70, 1600, 690).setBackgroundColor('#101b24');
+    this.cameras.main.setViewport(280, 70, 1040, 690).setBackgroundColor('#101619');
+    this.grid = this.add.graphics().setDepth(-8);
     this.overlay = this.add.graphics().setDepth(20);
     this.hud = this.add.graphics().setScrollFactor(0).setDepth(100);
     this.bossLabel = this.add
-      .text(800, 18, '', { fontFamily: 'sans-serif', fontSize: '20px', color: '#f6ddd5' })
+      .text(520, 18, '', { fontFamily: 'sans-serif', fontSize: '20px', color: '#f6ddd5' })
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(101);
@@ -67,6 +71,9 @@ export class BattleScene extends Phaser.Scene {
       ultimate: 'R',
       melee: 'F',
       item: 'C',
+      consumable1: 'Z',
+      consumable2: 'X',
+      target: 'TAB',
       ammo1: 'ONE',
       ammo2: 'TWO',
       ammo3: 'THREE',
@@ -92,7 +99,7 @@ export class BattleScene extends Phaser.Scene {
       if (
         ['battle', 'practice'].includes(this.session.view) &&
         !this.typing() &&
-        ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)
+        ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab'].includes(event.code)
       )
         event.preventDefault();
     };
@@ -127,12 +134,32 @@ export class BattleScene extends Phaser.Scene {
     }
     const k = this.keys;
     const input: InputState = {};
+    const modern = !!this.session.state?.players[this.session.localIndex]?.resolved;
+    const actionKey = (key: string) =>
+      modern
+        ? ((
+            { special: 'tactical1', ultimate: 'tactical2', item: 'tactical3' } as Record<
+              string,
+              string
+            >
+          )[key] ?? key)
+        : key;
     if (k.up?.isDown) input.dir = 0;
     else if (k.right?.isDown) input.dir = 1;
     else if (k.down?.isDown) input.dir = 2;
     else if (k.left?.isDown) input.dir = 3;
-    for (const key of ['fire', 'speed', 'special', 'heal', 'ultimate', 'melee', 'item'] as const)
-      if (k[key]?.isDown) input[key] = true;
+    for (const key of [
+      'fire',
+      'speed',
+      'special',
+      'heal',
+      'ultimate',
+      'melee',
+      'item',
+      'consumable1',
+      'consumable2',
+    ] as const)
+      if (k[key]?.isDown) input[actionKey(key) as 'fire'] = true;
     if (k.ammo1?.isDown) input.ammo = 'AP';
     else if (k.ammo2?.isDown) input.ammo = 'HE';
     else if (k.ammo3?.isDown) input.ammo = 'HESH';
@@ -147,8 +174,24 @@ export class BattleScene extends Phaser.Scene {
           tap as 'ammo1' | 'ammo2' | 'ammo3'
         ];
       else if (tap === 'pause') this.session.callbacks.onPauseRequest?.();
-      else if (['fire', 'speed', 'special', 'heal', 'ultimate', 'melee', 'item'].includes(tap))
-        input[tap as 'fire'] = true;
+      else if (tap === 'target' && modern) {
+        const parts = ['weapon', 'generator', 'core'] as const;
+        this.selectedPart = parts[(parts.indexOf(this.selectedPart) + 1) % parts.length];
+        input.targetPart = this.selectedPart;
+      } else if (
+        [
+          'fire',
+          'speed',
+          'special',
+          'heal',
+          'ultimate',
+          'melee',
+          'item',
+          'consumable1',
+          'consumable2',
+        ].includes(tap)
+      )
+        input[actionKey(tap) as 'fire'] = true;
     }
     return input;
   }
@@ -157,6 +200,7 @@ export class BattleScene extends Phaser.Scene {
     if (!map) return;
     this.terrain.forEach((t) => t.destroy());
     this.terrain = [];
+    this.grid.clear();
     this.actors.forEach((v) => {
       v.sprite.destroy();
       v.label.destroy();
@@ -165,9 +209,17 @@ export class BattleScene extends Phaser.Scene {
     this.padLabels.forEach((t) => t.destroy());
     this.padLabels = [];
     this.effectSeen.clear();
+    this.selectedPart = 'core';
     const tiles =
       map.artSet === 'legacy'
-        ? ['map_1_18', 'map_1_01', 'dawn-barricade', 'map_1_14', 'map_1_54', 'dawn-courtyard']
+        ? [
+            'dawn-courtyard',
+            'map_1_01',
+            'dawn-barricade',
+            'dawn-courtyard',
+            'dawn-courtyard',
+            'dawn-courtyard',
+          ]
         : [
             'terrain-ash',
             'terrain-coolant',
@@ -181,27 +233,43 @@ export class BattleScene extends Phaser.Scene {
         const tile = this.add
           .image(x * TILE + 30, y * TILE + 30, tiles[t] || tiles[0])
           .setDisplaySize(TILE, TILE)
-          .setDepth(-10);
+          .setDepth(-10)
+          .setTint(t === 1 ? 0x375b65 : t === 2 ? 0x92a3bb : 0x627992);
         this.terrain.push(tile);
+        const px = x * TILE,
+          py = y * TILE;
+        // A charcoal wash neutralizes old green art while preserving its surface texture.
+        this.grid
+          .fillStyle(t === 1 ? 0x203b40 : 0x252d30, t === 2 ? 0.2 : 0.35)
+          .fillRect(px, py, TILE, TILE);
+        this.grid.lineStyle(1, 0x7da19b, 0.45).strokeRect(px, py, TILE, TILE);
+        if (t === 2) {
+          this.grid.lineStyle(2, 0xaba38a, 0.6).strokeRect(px + 4, py + 4, TILE - 8, TILE - 8);
+          this.grid.fillStyle(0xc69954, 0.8).fillRect(px + 5, py + 5, 11, 3);
+        } else if (t === 1) {
+          this.grid.lineStyle(2, 0x69bcb0, 0.32).lineBetween(px + 10, py + 45, px + 28, py + 45);
+        }
       }),
     );
     const cam = this.cameras.main;
-    const zoom = Math.min(1.3, 1600 / (map.width * TILE), 690 / (map.height * TILE));
-    const z = Math.max(0.8, zoom);
+    const zoom = Math.min(1.3, 1040 / (map.width * TILE), 690 / (map.height * TILE));
+    const z = Math.max(0.65, zoom);
     cam.setZoom(z);
-    const padX = Math.max(0, (1600 / z - map.width * TILE) / 2),
+    const padX = Math.max(0, (1040 / z - map.width * TILE) / 2),
       padY = Math.max(0, (690 / z - map.height * TILE) / 2);
     cam.setBounds(-padX, -padY, map.width * TILE + padX * 2, map.height * TILE + padY * 2);
     cam.centerOn((map.width * TILE) / 2, (map.height * TILE) / 2);
-    this.hud.setScale(1 / z).setPosition((800 * (z - 1)) / z, (345 * (z - 1)) / z);
-    this.bossLabel.setScale(1 / z).setPosition(800, (18 - 345 * (1 - z)) / z);
+    this.hud.setScale(1 / z).setPosition((520 * (z - 1)) / z, (345 * (z - 1)) / z);
+    this.bossLabel.setScale(1 / z).setPosition(520, (18 - 345 * (1 - z)) / z);
     this.objectiveLabel
       .setScale(1 / z)
-      .setPosition((24 - 800 * (1 - z)) / z, (18 - 345 * (1 - z)) / z);
+      .setPosition((24 - 520 * (1 - z)) / z, (18 - 345 * (1 - z)) / z);
     this.version = this.session.version;
   }
   private texture(actor: Actor) {
     const p = actor as Player;
+    if (actor.team && p.machineId)
+      return `eva-${p.machineId.includes('eva00') ? 'unit00' : p.machineId.includes('eva01') ? 'unit01' : p.machineId.includes('eva08') ? 'unit08' : 'unit02'}`;
     if (this.session.map?.artSet === 'legacy') {
       const dir = actor.dir === 0 ? 'W' : actor.dir === 2 ? 'S' : 'A';
       return actor.team
@@ -228,7 +296,9 @@ export class BattleScene extends Phaser.Scene {
           .text(actor.x, actor.y - 43, '', {
             fontFamily: 'sans-serif',
             fontSize: '12px',
-            color: '#c7e5e9',
+            color: '#e9e4d5',
+            backgroundColor: '#101619',
+            padding: { x: 5, y: 3 },
           })
           .setOrigin(0.5)
           .setDepth(30),
@@ -241,10 +311,47 @@ export class BattleScene extends Phaser.Scene {
     sprite.x += (actor.x - sprite.x) * smooth;
     sprite.y += (actor.y - sprite.y) * smooth;
     if (sprite.texture.key !== key) sprite.setTexture(key);
-    const size = actor.boss ? 160 : this.session.map?.artSet === 'new' && actor.team ? 80 : 60;
+    const size = actor.boss
+      ? 160
+      : (actor as Player).machineId
+        ? 72
+        : this.session.map?.artSet === 'new' && actor.team
+          ? 80
+          : 60;
     sprite.setDisplaySize(size, size);
     sprite.setAlpha(actor.hp <= 0 ? 0.2 : actor.flash > 0 ? 0.6 : 1);
-    if (this.session.map?.artSet === 'legacy') {
+    if ((actor as Player).machineId) {
+      sprite.setFlipX(false).setRotation((actor.dir * Math.PI) / 2);
+      const cosmetic = (actor as Player).resolved?.preset.cosmeticId;
+      if (cosmetic === 'cosmetic.night-watch') sprite.setTint(0x728dbb);
+      else sprite.clearTint();
+      if (cosmetic === 'cosmetic.dawn-stripe') {
+        const dx = Math.cos((actor.dir * Math.PI) / 2) * 15,
+          dy = Math.sin((actor.dir * Math.PI) / 2) * 15;
+        this.overlay
+          .lineStyle(9, 0xf4eee0, 0.95)
+          .lineBetween(sprite.x - dx, sprite.y - dy, sprite.x + dx, sprite.y + dy)
+          .lineStyle(4, 0xff9955, 1)
+          .lineBetween(sprite.x - dx, sprite.y - dy, sprite.x + dx, sprite.y + dy);
+      }
+      const serviceColors: Record<string, number> = {
+        'cosmetic.unit-safety': 0xb6e895,
+        'cosmetic.route-veteran': 0xe9ba78,
+        'cosmetic.rescue-veteran': 0x98e0e4,
+        'cosmetic.guard-veteran': 0xb0b2f7,
+      };
+      if (cosmetic && serviceColors[cosmetic]) {
+        this.overlay
+          .lineStyle(2, serviceColors[cosmetic], 0.8)
+          .strokeCircle(sprite.x, sprite.y, 39);
+        for (let mark = 0; mark < 4; mark++) {
+          const angle = (mark * Math.PI) / 2;
+          this.overlay
+            .fillStyle(serviceColors[cosmetic], 0.95)
+            .fillCircle(sprite.x + Math.cos(angle) * 39, sprite.y + Math.sin(angle) * 39, 3);
+        }
+      }
+    } else if (this.session.map?.artSet === 'legacy') {
       sprite.setRotation(0).setFlipX(actor.dir === 1);
       if (actor.moving && this.anims.exists(key)) {
         if (sprite.anims.currentAnim?.key !== key || !sprite.anims.isPlaying) sprite.play(key);
@@ -263,7 +370,7 @@ export class BattleScene extends Phaser.Scene {
       .setPosition(sprite.x, sprite.y - (actor.boss ? 78 : 43))
       .setText(
         actor.team
-          ? `${p.character === 'Asuka' ? '明日香' : '绫波丽'}${actor.hp <= 0 ? ' · 待救援' : ''}`
+          ? `${(this.session.state?.players.findIndex((player) => player.id === actor.id) ?? 0) + 1}P · ${p.machineId ? `${this.session.state?.players[this.session.localIndex]?.id === actor.id ? '你' : '队友'} · ${Eva.MACHINES.find((m) => m.id === p.machineId)?.name ?? ''}` : p.character === 'Asuka' ? '明日香' : '绫波丽'}${actor.hp <= 0 ? ' · 待救援' : ''}`
           : '',
       );
     if (visual.hp > actor.hp && actor.hp > 0 && !this.session.reducedMotion) {
@@ -288,10 +395,27 @@ export class BattleScene extends Phaser.Scene {
     }
     visual.hp = actor.hp;
     if (actor.hp <= 0) return;
+    const playerIndex =
+      this.session.state?.players.findIndex((player) => player.id === actor.id) ?? 0;
+    const teamColor = playerIndex === 0 ? 0xe65032 : 0x69bcb0;
+    if (actor.team) {
+      label.setColor(playerIndex === 0 ? '#ff9b80' : '#8bded0');
+      const left = sprite.x - 31,
+        top = sprite.y - 31;
+      this.overlay.lineStyle(2, teamColor, 1);
+      for (const [cx, cy, sx, sy] of [
+        [left, top, 1, 1],
+        [left + 62, top, -1, 1],
+        [left, top + 62, 1, -1],
+        [left + 62, top + 62, -1, -1],
+      ]) {
+        this.overlay.lineBetween(cx, cy, cx + sx * 12, cy).lineBetween(cx, cy, cx, cy + sy * 12);
+      }
+    }
     this.overlay
       .fillStyle(0x101821, 0.9)
       .fillRect(sprite.x - 22, sprite.y + 31, 44, 4)
-      .fillStyle(actor.team ? 0x7de1d5 : 0xd47961)
+      .fillStyle(actor.team ? teamColor : 0xe65032)
       .fillRect(sprite.x - 22, sprite.y + 31, (44 * actor.hp) / actor.maxHp, 4);
     if ((p.shield || 0) > 0)
       this.overlay.lineStyle(2, 0x91e8ff, 0.8).strokeCircle(sprite.x, sprite.y, 36);
@@ -311,6 +435,71 @@ export class BattleScene extends Phaser.Scene {
       this.spawnEffect(effect);
     }
     if (this.effectSeen.size > 1500) this.effectSeen.clear();
+  }
+  private evaMechanics() {
+    const state = this.session.state;
+    if (!state) return;
+    const local = state.players[this.session.localIndex];
+    for (const zone of state.powerZones ?? []) {
+      const color = zone.active ? (zone.backup ? 0xffcf85 : 0x88d9c9) : 0x7d8b96;
+      this.overlay
+        .fillStyle(color, zone.active ? 0.09 : 0.03)
+        .fillCircle(zone.x, zone.y, zone.radius)
+        .lineStyle(3, color, zone.active ? 0.7 : 0.25)
+        .strokeCircle(zone.x, zone.y, zone.radius)
+        .fillStyle(color, 0.8)
+        .fillRect(zone.x - 9, zone.y - 9, 18, 18);
+      for (const player of state.players)
+        if (zone.active && Math.hypot(player.x - zone.x, player.y - zone.y) <= zone.radius)
+          this.overlay.lineStyle(2, color, 0.6).lineBetween(zone.x, zone.y, player.x, player.y);
+    }
+    if (state.objective?.position) {
+      const o = state.objective,
+        { x, y } = o.position!;
+      this.overlay
+        .fillStyle(0xa5dac8, 0.25)
+        .fillRoundedRect(x - 23, y - 32, 46, 64, 6)
+        .lineStyle(3, 0xcce8a3, 0.9)
+        .strokeRoundedRect(x - 23, y - 32, 46, 64, 6);
+      this.overlay
+        .fillStyle(0x19232c)
+        .fillRect(x - 30, y + 40, 60, 6)
+        .fillStyle(0xb9e89d)
+        .fillRect(x - 30, y + 40, 60 * Math.max(0, o.hp / o.maxHp), 6);
+      if (o.kind === 'defense') this.overlay.lineStyle(2, 0xa1cfac, 0.45).strokeCircle(x, y, 180);
+    }
+    for (const enemy of state.enemies)
+      if (enemy.hp > 0)
+        for (const part of enemy.parts ?? []) {
+          const color =
+            part.state === 'disabled'
+              ? 0x687b86
+              : part.id === 'core'
+                ? 0xffc477
+                : part.id === 'generator'
+                  ? 0x81c6ff
+                  : 0xe6a49c;
+          const focused = (local?.targetPart ?? 'core') === part.id;
+          this.overlay
+            .fillStyle(color, 0.18)
+            .fillCircle(part.x, part.y, part.r)
+            .lineStyle(focused ? 4 : 2, color, part.state === 'disabled' ? 0.3 : 0.9)
+            .strokeCircle(part.x, part.y, part.r);
+          if (focused)
+            this.overlay
+              .lineStyle(1, 0xffffff, 0.8)
+              .strokeRect(
+                part.x - part.r - 6,
+                part.y - part.r - 6,
+                part.r * 2 + 12,
+                part.r * 2 + 12,
+              );
+          this.overlay
+            .fillStyle(0x091620, 0.9)
+            .fillRect(part.x - 22, part.y + part.r + 4, 44, 4)
+            .fillStyle(color)
+            .fillRect(part.x - 22, part.y + part.r + 4, 44 * Math.max(0, part.hp / part.maxHp), 4);
+        }
   }
   private spawnEffect(effect: Effect) {
     const color =
@@ -371,7 +560,7 @@ export class BattleScene extends Phaser.Scene {
     }
     this.padLabels.forEach((label, index) => label.setVisible(index < pads.length));
     pads.forEach((p, i) => {
-      const color = i === 0 ? 0xff9077 : 0x8adcff;
+      const color = i === 0 ? 0xe65032 : 0x69bcb0;
       this.overlay
         .fillStyle(color, 0.12)
         .fillCircle(p.x, p.y, 28)
@@ -489,10 +678,18 @@ export class BattleScene extends Phaser.Scene {
         this.overlay.lineStyle(2, 0xffb49c, 0.9).strokeCircle(e.x, e.y, e.boss ? 85 : 45);
       }
     this.cooperation();
+    this.evaMechanics();
     const objective = s.state.cooperation?.objective;
+    const missionObjective = s.state.objective;
     this.objectiveLabel
-      .setVisible(!!objective)
-      .setText(objective ? `${objective.state === 'complete' ? '✓ ' : ''}${objective.text}` : '');
+      .setVisible(false)
+      .setText(
+        missionObjective
+          ? `${missionObjective.label} · ${Math.floor(missionObjective.progress)}/${Math.ceil(missionObjective.required)}${objective && objective.state !== 'complete' ? `\n${objective.text}` : ''}`
+          : objective
+            ? `${objective.state === 'complete' ? '✓ ' : ''}${objective.text}`
+            : '',
+      );
     this.effects();
     const boss = s.state.enemies.find((e) => e.boss && e.hp > 0);
     this.bossLabel.setVisible(!!boss);
@@ -503,9 +700,9 @@ export class BattleScene extends Phaser.Scene {
       this.bossLabel.setText(`${title}  ·  ${Math.ceil(boss.hp)} / ${boss.maxHp}`);
       this.hud
         .fillStyle(0x141720, 0.95)
-        .fillRoundedRect(490, 47, 620, 12, 6)
-        .fillStyle(0xe29375)
-        .fillRoundedRect(492, 49, (616 * boss.hp) / boss.maxHp, 8, 4);
+        .fillRect(210, 47, 620, 10)
+        .fillStyle(0xe65032)
+        .fillRect(212, 49, (616 * boss.hp) / boss.maxHp, 6);
     }
     const player = s.state.players[s.localIndex];
     if (player) {

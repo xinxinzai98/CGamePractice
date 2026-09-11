@@ -11,7 +11,10 @@ require('./register-loader.cjs');
 test('typed room client parses real server lobby, Boss start and pause without fallback', async (t) => {
   const { RoomClient } = await import('../src/services/room-client.ts');
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'dawn-wire-'));
-  const server = createServer({ profilesFile: path.join(folder, 'profiles.sqlite') });
+  const server = createServer({
+    allowLegacyClients: true,
+    profilesFile: path.join(folder, 'profiles.sqlite'),
+  });
   server.server.listen(0, '127.0.0.1');
   await once(server.server, 'listening');
   const clients = [];
